@@ -116,5 +116,43 @@ End-to-end on Windows:
 4. Instruct receiver to play; support pause/seek/stop/EOF/teardown/reconnect
 5. Restart VLC and reconnect without pairing again
 
-See the completion report in the commit message / agent handoff for the exact
-module boundaries and test-double plan.
+### Testing strategy (real hardware available)
+
+The developer has actual AirPlay receivers. Use them deliberately:
+
+- **Fake / unit tests first** for TXT/aggregation regressions, pairing FSM
+  transitions, HTTP token auth, and control plist encode/decode without
+  multicast.
+- **Real devices required** for pairing crypto/PIN flow, keystore reuse after
+  VLC restart, play/pause/seek/stop/EOF/teardown, and LAN reachability of the
+  tokenized HTTP URL from the receiver.
+- Prefer one Apple TV for the end-to-end video demo; add a HomePod (or other
+  audio-only receiver) when validating audio-only capability mapping.
+- Do not block the tranche on multiroom sync or every hardware variant.
+
+### Next-agent prompt
+
+```
+Continue AirPlay on branch feature/airplay-foundation (after ae32222765 /
+doc/airplay-foundation.md). Foundation is done: stable renderer id API, Qt
+type#id keys, microdns protocol descriptors, AirPlay/RAOP aggregation
+publishing type=airplay with empty sout.
+
+Implement the next vertical slice on Windows:
+- modules/stream_out/airplay/ (portable; keep out of Qt/Win32 UI)
+- Pairing once; store identity in VLC keystore (no secrets in sout/URI)
+- Serve local H.264/AAC MP4 via tokenized HTTP; instruct receiver to play
+- pause/seek/stop/EOF/teardown/reconnect; restart VLC without re-pairing
+- Extract only what is needed from Chromecast session bridge patterns
+- No FairPlay / Apple private material
+
+Testing (real AirPlay hardware is available):
+- Keep fake/unit coverage for parsers, FSM, HTTP token, plist
+- Must validate pairing, keystore reuse, playback controls, and HTTP
+  reachability against a real Apple TV
+- Optionally validate audio-only path on a HomePod / audio accessory
+- Do not require multiroom or full model matrix for this tranche
+
+Run airplay unit tests; build/run whatever the environment allows.
+Small reviewable commits; do not push unless asked.
+```
