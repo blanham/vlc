@@ -41,7 +41,41 @@
 #define VLC_RENDERER_CAN_VIDEO 0x0002
 
 /**
+ * Description used to create a renderer item
+ *
+ * Optional fields may be NULL. Protocol-specific secrets must never be stored
+ * in uri, extra_sout, or id.
+ *
+ * When uri is NULL, the item is discoverable but not connectable yet (sout is
+ * empty). Callers must not attempt to build a stream-output chain from it.
+ */
+struct vlc_renderer_item_desc
+{
+    const char *type; /**< Renderer protocol type (e.g. "chromecast", "airplay") */
+    const char *id; /**< Stable protocol identity; not an IP address (optional) */
+    const char *name; /**< Human readable name (optional) */
+    const char *uri; /**< sout URI; NULL means not connectable yet */
+    const char *extra_sout; /**< Extra sout options (optional) */
+    const char *demux_filter; /**< Demux filter to use (optional) */
+    const char *icon_uri; /**< Icon URI (optional) */
+    int flags; /**< Coarse VLC_RENDERER_CAN_* flags */
+    uint64_t capabilities; /**< Extensible capability mask; must not silently
+                                narrow protocol feature bits into flags alone */
+};
+
+/**
+ * Create a new renderer item from a description
+ *
+ * @param desc renderer description (must not be NULL; type is mandatory)
+ * @return a renderer item or NULL in case of error
+ */
+VLC_API vlc_renderer_item_t *
+vlc_renderer_item_new_ex(const struct vlc_renderer_item_desc *desc) VLC_USED;
+
+/**
  * Create a new renderer item
+ *
+ * Compatibility wrapper around vlc_renderer_item_new_ex().
  *
  * @param psz_type type of the item
  * @param psz_name name of the item
@@ -78,11 +112,21 @@ VLC_API const char *
 vlc_renderer_item_name(const vlc_renderer_item_t *p_item);
 
 /**
- * Get the type (not translated) of a renderer item. For now, the type can only
- * be "chromecast" ("upnp", "airplay" may come later).
+ * Get the type (not translated) of a renderer item
+ *
+ * Known values include "chromecast" and "airplay".
  */
 VLC_API const char *
 vlc_renderer_item_type(const vlc_renderer_item_t *p_item);
+
+/**
+ * Get the stable protocol identity of a renderer item
+ *
+ * @return the identity string, or NULL when the discovery module did not
+ * provide one (legacy items)
+ */
+VLC_API const char *
+vlc_renderer_item_id(const vlc_renderer_item_t *p_item);
 
 /**
  * Get the demux filter to use with a renderer item
@@ -92,6 +136,9 @@ vlc_renderer_item_demux_filter(const vlc_renderer_item_t *p_item);
 
 /**
  * Get the sout command of a renderer item
+ *
+ * @return the sout command, or an empty string when the renderer is not
+ * connectable yet
  */
 VLC_API const char *
 vlc_renderer_item_sout(const vlc_renderer_item_t *p_item);
@@ -103,10 +150,24 @@ VLC_API const char *
 vlc_renderer_item_icon_uri(const vlc_renderer_item_t *p_item);
 
 /**
- * Get the flags of a renderer item
+ * Get the coarse flags of a renderer item
+ *
+ * @see VLC_RENDERER_CAN_AUDIO
+ * @see VLC_RENDERER_CAN_VIDEO
  */
 VLC_API int
 vlc_renderer_item_flags(const vlc_renderer_item_t *p_item);
+
+/**
+ * Get the full capability mask of a renderer item
+ *
+ * The low bits remain compatible with vlc_renderer_item_flags(). Additional
+ * protocol-neutral capability bits may be defined later. Protocol-private
+ * feature masks (for example AirPlay TXT "features") must not be stuffed here
+ * as a silent narrowing of a larger protocol field.
+ */
+VLC_API uint64_t
+vlc_renderer_item_capabilities(const vlc_renderer_item_t *p_item);
 
 /**
  * @}

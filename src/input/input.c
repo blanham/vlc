@@ -793,6 +793,14 @@ static int InitSout( input_thread_t * p_input )
         free(psz);
 
         const char *psz_renderer_sout = vlc_renderer_item_sout( priv->p_renderer );
+        if( psz_renderer_sout == NULL || psz_renderer_sout[0] == '\0' )
+        {
+            free( psz );
+            msg_Err( p_input, "renderer '%s' is not connectable yet",
+                     vlc_renderer_item_name( priv->p_renderer ) );
+            input_ChangeState( p_input, ERROR_S, VLC_TICK_INVALID );
+            return VLC_EGENERIC;
+        }
         if( asprintf( &psz, "#%s", psz_renderer_sout ) < 0 )
             return VLC_ENOMEM;
         if( keep_sout )

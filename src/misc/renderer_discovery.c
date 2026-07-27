@@ -36,10 +36,12 @@ struct vlc_renderer_item_t
 {
     char *psz_name;
     char *psz_type;
+    char *psz_id;
     char *psz_sout;
     char *psz_icon_uri;
     char *psz_demux_filter;
     int i_flags;
+    uint64_t i_capabilities;
     vlc_atomic_rc_t rc;
 };
 
@@ -48,40 +50,32 @@ item_free(vlc_renderer_item_t *p_item)
 {
     free(p_item->psz_name);
     free(p_item->psz_type);
+    free(p_item->psz_id);
     free(p_item->psz_sout);
     free(p_item->psz_icon_uri);
     free(p_item->psz_demux_filter);
     free(p_item);
 }
 
-vlc_renderer_item_t *
-vlc_renderer_item_new(const char *psz_type, const char *psz_name,
-                      const char *psz_uri, const char *psz_extra_sout,
-                      const char *psz_demux_filter, const char *psz_icon_uri,
-                      int i_flags)
+static int
+item_set_sout_from_uri(vlc_renderer_item_t *p_item, const char *psz_uri,
+                       const char *psz_name, const char *psz_extra_sout)
 {
-    assert(psz_uri != NULL);
-    vlc_renderer_item_t *p_item = NULL;
     vlc_url_t url;
     vlc_UrlParse(&url, psz_uri);
 
     if (url.psz_protocol == NULL || url.psz_host == NULL)
-        goto error;
+    {
+        vlc_UrlClean(&url);
+        return VLC_EGENERIC;
+    }
 
-    p_item = calloc(1, sizeof(vlc_renderer_item_t));
-    if (unlikely(p_item == NULL))
-        goto error;
-
-    if ((p_item->psz_type = strdup(psz_type)) == NULL)
-        goto error;
-
-    if (psz_name != NULL)
-        p_item->psz_name = strdup(psz_name);
-    else if (asprintf(&p_item->psz_name, "%s (%s)", url.psz_protocol,
-                      url.psz_host) == -1)
-        p_item->psz_name = NULL;
-    if (p_item->psz_name == NULL)
-        goto error;
+    if (psz_name == NULL)
+    {
+        if (asprintf(&p_item->psz_name, "%s (%s)", url.psz_protocol,
+                     url.psz_host) == -1)
+            p_item->psz_name = NULL;
+    }
 
     if (asprintf(&p_item->psz_sout, "%s{ip=%s,port=%u,%s%s%s%s}",
                  url.psz_protocol, url.psz_host, url.i_port,
@@ -91,25 +85,106 @@ vlc_renderer_item_new(const char *psz_type, const char *psz_name,
                  psz_extra_sout != NULL ? psz_extra_sout : "") == -1)
     {
         p_item->psz_sout = NULL;
-        goto error;
+        vlc_UrlClean(&url);
+        return VLC_ENOMEM;
     }
 
-    if (psz_icon_uri && (p_item->psz_icon_uri = strdup(psz_icon_uri)) == NULL)
-        goto error;
-
-    if (psz_demux_filter && (p_item->psz_demux_filter = strdup(psz_demux_filter)) == NULL)
-        goto error;
-
-    p_item->i_flags = i_flags;
-    vlc_atomic_rc_init(&p_item->rc);
     vlc_UrlClean(&url);
+    return VLC_SUCCESS;
+}
+
+vlc_renderer_item_t *
+vlc_renderer_item_new_ex(const struct vlc_renderer_item_desc *desc)
+{
+    assert(desc != NULL);
+    assert(desc->type != NULL);
+
+    vlc_renderer_item_t *p_item = calloc(1, sizeof(*p_item));
+    if (unlikely(p_item == NULL))
+        return NULL;
+
+    if ((p_item->psz_type = strdup(desc->type)) == NULL)
+        goto error;
+
+    if (desc->id != NULL)
+    {
+        p_item->psz_id = strdup(desc->id);
+        if (p_item->psz_id == NULL)
+            goto error;
+    }
+
+    if (desc->name != NULL)
+    {
+        p_item->psz_name = strdup(desc->name);
+        if (p_item->psz_name == NULL)
+            goto error;
+    }
+
+    if (desc->uri != NULL)
+    {
+        if (item_set_sout_from_uri(p_item, desc->uri, desc->name,
+                                   desc->extra_sout) != VLC_SUCCESS)
+            goto error;
+    }
+    else
+    {
+        /* Explicitly not connectable: empty sout, no fake command. */
+        p_item->psz_sout = strdup("");
+        if (p_item->psz_sout == NULL)
+            goto error;
+        if (p_item->psz_name == NULL)
+        {
+            p_item->psz_name = strdup(desc->type);
+            if (p_item->psz_name == NULL)
+                goto error;
+        }
+    }
+
+    if (p_item->psz_name == NULL)
+        goto error;
+
+    if (desc->icon_uri != NULL
+     && (p_item->psz_icon_uri = strdup(desc->icon_uri)) == NULL)
+        goto error;
+
+    if (desc->demux_filter != NULL
+     && (p_item->psz_demux_filter = strdup(desc->demux_filter)) == NULL)
+        goto error;
+
+    p_item->i_flags = desc->flags;
+    p_item->i_capabilities = desc->capabilities;
+    /* Keep coarse flags visible in the capability mask without discarding
+     * any additional bits the caller already set. */
+    p_item->i_capabilities |= (uint64_t)(desc->flags & (VLC_RENDERER_CAN_AUDIO
+                                                      | VLC_RENDERER_CAN_VIDEO));
+    vlc_atomic_rc_init(&p_item->rc);
     return p_item;
 
 error:
-    vlc_UrlClean(&url);
-    if (p_item != NULL)
-        item_free(p_item);
+    item_free(p_item);
     return NULL;
+}
+
+vlc_renderer_item_t *
+vlc_renderer_item_new(const char *psz_type, const char *psz_name,
+                      const char *psz_uri, const char *psz_extra_sout,
+                      const char *psz_demux_filter, const char *psz_icon_uri,
+                      int i_flags)
+{
+    assert(psz_uri != NULL);
+
+    const struct vlc_renderer_item_desc desc = {
+        .type = psz_type,
+        .id = NULL,
+        .name = psz_name,
+        .uri = psz_uri,
+        .extra_sout = psz_extra_sout,
+        .demux_filter = psz_demux_filter,
+        .icon_uri = psz_icon_uri,
+        .flags = i_flags,
+        .capabilities = (uint64_t)i_flags,
+    };
+    return vlc_renderer_item_new_ex(&desc);
 }
 
 const char *
@@ -126,6 +201,14 @@ vlc_renderer_item_type(const vlc_renderer_item_t *p_item)
     assert(p_item != NULL);
 
     return p_item->psz_type;
+}
+
+const char *
+vlc_renderer_item_id(const vlc_renderer_item_t *p_item)
+{
+    assert(p_item != NULL);
+
+    return p_item->psz_id;
 }
 
 const char *
@@ -158,6 +241,14 @@ vlc_renderer_item_flags(const vlc_renderer_item_t *p_item)
     assert(p_item != NULL);
 
     return p_item->i_flags;
+}
+
+uint64_t
+vlc_renderer_item_capabilities(const vlc_renderer_item_t *p_item)
+{
+    assert(p_item != NULL);
+
+    return p_item->i_capabilities;
 }
 
 vlc_renderer_item_t *
