@@ -229,3 +229,6 @@ subdir('chromecast')
 
 # HLS module
 subdir('hls')
+
+# AirPlay module
+subdir('airplay')

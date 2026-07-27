@@ -166,4 +166,10 @@ BUILT_SOURCES += stream_out/chromecast/@PROTOBUF_VERSION@/cast_channel.pb.cc \
 sout_PLUGINS += libstream_out_chromecast_plugin.la
 demux_PLUGINS += libdemux_chromecast_plugin.la
 endif
+if HAVE_GCRYPT
+libstream_out_airplay_plugin_la_SOURCES = \
+	stream_out/airplay/airplay.c stream_out/airplay/airplay.h
+libstream_out_airplay_plugin_la_LIBADD = $(SOCKET_LIBS) $(GCRYPT_LIBS)
+sout_PLUGINS += libstream_out_airplay_plugin.la
+endif
 endif
