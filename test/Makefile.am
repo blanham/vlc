@@ -68,6 +68,7 @@ check_PROGRAMS = \
 	test_src_misc_keystore \
 	test_src_misc_image \
 	test_src_misc_viewpoint \
+	test_src_misc_renderer_item \
 	test_src_video_output \
 	test_src_video_output_inhibit \
 	test_src_video_output_opengl \
@@ -98,6 +99,7 @@ check_PROGRAMS = \
 	test_modules_stream_out_transcode \
 	test_modules_mux_webvtt \
 	test_modules_stream_out_hls_subtitles_segmenter \
+	test_modules_airplay_discovery \
 	$(NULL)
 
 check_PROGRAMS += $(player_programs)
@@ -317,6 +319,8 @@ test_src_misc_image_cvpx_LDADD = $(LIBVLCCORE) $(LIBVLC) ../modules/libvlc_vtuti
 test_src_misc_image_cvpx_LDFLAGS = $(AM_LDFLAGS) -Wl,-framework,CoreVideo
 test_src_misc_viewpoint_SOURCES = src/misc/viewpoint.c
 test_src_misc_viewpoint_LDADD = $(LIBVLCCORE) $(LIBM)
+test_src_misc_renderer_item_SOURCES = src/misc/renderer_item.c
+test_src_misc_renderer_item_LDADD = $(LIBVLCCORE)
 test_src_interface_dialog_SOURCES = src/interface/dialog.c
 test_src_interface_dialog_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_media_source_LDADD = $(LIBVLCCORE) $(LIBVLC)
@@ -468,6 +472,12 @@ test_modules_stream_out_sdi_LDADD = $(LIBVLCCORE) $(LIBVLC)
 
 test_modules_mux_webvtt_SOURCES = modules/mux/webvtt.c
 test_modules_mux_webvtt_LDADD = $(LIBVLCCORE) $(LIBVLC)
+
+test_modules_airplay_discovery_SOURCES = \
+	modules/services_discovery/airplay.c \
+	../modules/services_discovery/airplay_discovery.c
+test_modules_airplay_discovery_CFLAGS = $(AM_CFLAGS)
+test_modules_airplay_discovery_LDADD =
 
 test_modules_stream_out_hls_subtitles_segmenter_SOURCES = \
 	modules/stream_out/hls/subtitles_segmenter.c \

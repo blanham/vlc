@@ -258,3 +258,11 @@ vlc_tests += {
     'link_with' : [libvlc, libvlccore],
     'module_depends' : vlc_plugins_targets.keys()
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_discovery',
+    'sources' : files(
+        'services_discovery/airplay.c',
+        '../../modules/services_discovery/airplay_discovery.c'),
+    'suite' : ['modules', 'test_modules'],
+}

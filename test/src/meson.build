@@ -26,6 +26,13 @@ vlc_tests += {
 }
 
 vlc_tests += {
+    'name' : 'test_src_misc_renderer_item',
+    'sources' : files('misc/renderer_item.c'),
+    'suite' : ['src', 'test_src'],
+    'link_with' : [libvlccore],
+}
+
+vlc_tests += {
     'name' : 'test_src_clock_clock',
     'sources' : files(
         'clock/clock.c',
