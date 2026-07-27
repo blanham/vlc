@@ -119,9 +119,20 @@ public:
         }
         else
         {
-            /* mark the item as seen during this scan */
+            /* mark the item as seen during this scan; replace the pointer when
+             * a stable identity keeps the row but the endpoint/sout changed */
             ItemEntry& entry = m_items[key];
             entry.currentScan = true;
+            if (entry.renderItem != renderItem)
+            {
+                entry.renderItem = renderItem;
+                int row = m_itemsIndex.indexOf(key);
+                if (row >= 0)
+                {
+                    auto idx = q->index(row);
+                    emit q->dataChanged(idx, idx);
+                }
+            }
         }
     }
 
@@ -188,8 +199,13 @@ public:
     QString getItemKey(const RendererItemPtr& item) const
     {
         const char* type = vlc_renderer_item_type(item.get());
+        const char* id = vlc_renderer_item_id(item.get());
+        if (id != nullptr && id[0] != '\0')
+            return QString("%1#%2").arg(type, id);
+
+        /* Legacy discoverers without a stable id keep the previous key. */
         const char* sout = vlc_renderer_item_sout(item.get());
-        return QString("%1-%2").arg(type).arg(sout);
+        return QString("%1-%2").arg(type, sout);
     }
 
     int getItemRow(const RendererItemPtr& item) const
@@ -299,6 +315,13 @@ bool RendererManager::setData(const QModelIndex &index, const QVariant &value, i
             enableRenderer = value.toBool();
         else
             return false;
+
+        if (enableRenderer)
+        {
+            const char *sout = vlc_renderer_item_sout(entry.renderItem.get());
+            if (sout == nullptr || sout[0] == '\0')
+                return false; /* discovered but not connectable yet */
+        }
 
         {
             vlc_player_locker lock{ d->m_player };

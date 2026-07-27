@@ -199,6 +199,46 @@ private slots:
         }
     }
 
+    void testStableIdentityKey() {
+        m_model->StartScan();
+        QVERIFY(rd() != nullptr);
+
+        const struct vlc_renderer_item_desc desc1 = {
+            .type = "airplay",
+            .id = "airplay:AABBCCDDEEFF",
+            .name = "Living Room",
+            .uri = NULL,
+            .flags = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
+            .capabilities = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
+        };
+        RendererItemPtr first(vlc_renderer_item_new_ex(&desc1));
+        QVERIFY(first.get() != nullptr);
+        vlc_rd_add_item(rd(), first.get());
+        QCOMPARE(m_model->rowCount(), 1);
+
+        /* Same stable id must update the row, not duplicate. */
+        const struct vlc_renderer_item_desc desc2 = {
+            .type = "airplay",
+            .id = "airplay:AABBCCDDEEFF",
+            .name = "Living Room",
+            .uri = NULL,
+            .flags = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
+            .capabilities = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
+        };
+        RendererItemPtr second(vlc_renderer_item_new_ex(&desc2));
+        QVERIFY(second.get() != nullptr);
+        vlc_rd_add_item(rd(), second.get());
+        QCOMPARE(m_model->rowCount(), 1);
+        QCOMPARE(m_model->data(m_model->index(0), RendererManager::NAME),
+                 QString("Living Room"));
+
+        /* Empty sout: not selectable for playback yet. */
+        QVERIFY(!m_model->setData(m_model->index(0), true, RendererManager::SELECTED));
+        QCOMPARE(m_model->useRenderer(), false);
+
+        m_model->StopScan();
+    }
+
     void testRendererSelection() {
         m_model->StartScan();
 
