@@ -162,7 +162,11 @@ microdns_dep = dependency('microdns', required: get_option('microdns'))
 if microdns_dep.found()
     vlc_modules += {
         'name' : 'microdns',
-        'sources' : files('microdns.c'),
+        'sources' : files(
+            'microdns.c',
+            'airplay_discovery.c',
+            'airplay_discovery.h',
+        ),
         'dependencies' : [microdns_dep, socket_libs],
         'plugin_dir' : 'services_discovery',
     }
