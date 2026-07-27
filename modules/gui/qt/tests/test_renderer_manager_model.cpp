@@ -203,28 +203,26 @@ private slots:
         m_model->StartScan();
         QVERIFY(rd() != nullptr);
 
-        const struct vlc_renderer_item_desc desc1 = {
-            .type = "airplay",
-            .id = "airplay:AABBCCDDEEFF",
-            .name = "Living Room",
-            .uri = NULL,
-            .flags = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
-            .capabilities = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
-        };
+        struct vlc_renderer_item_desc desc1 = {};
+        desc1.type = "airplay";
+        desc1.id = "airplay:AABBCCDDEEFF";
+        desc1.name = "Living Room";
+        desc1.uri = nullptr;
+        desc1.flags = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO;
+        desc1.capabilities = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO;
         RendererItemPtr first(vlc_renderer_item_new_ex(&desc1));
         QVERIFY(first.get() != nullptr);
         vlc_rd_add_item(rd(), first.get());
         QCOMPARE(m_model->rowCount(), 1);
 
         /* Same stable id must update the row, not duplicate. */
-        const struct vlc_renderer_item_desc desc2 = {
-            .type = "airplay",
-            .id = "airplay:AABBCCDDEEFF",
-            .name = "Living Room",
-            .uri = NULL,
-            .flags = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
-            .capabilities = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO,
-        };
+        struct vlc_renderer_item_desc desc2 = {};
+        desc2.type = "airplay";
+        desc2.id = "airplay:AABBCCDDEEFF";
+        desc2.name = "Living Room";
+        desc2.uri = nullptr;
+        desc2.flags = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO;
+        desc2.capabilities = VLC_RENDERER_CAN_AUDIO | VLC_RENDERER_CAN_VIDEO;
         RendererItemPtr second(vlc_renderer_item_new_ex(&desc2));
         QVERIFY(second.get() != nullptr);
         vlc_rd_add_item(rd(), second.get());
