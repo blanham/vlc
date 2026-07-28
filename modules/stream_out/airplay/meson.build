@@ -18,6 +18,7 @@ vlc_modules += {
         'pairing.c',
         'path.c',
         'plist.c',
+        'session.c',
         'tlv.c'),
     'dependencies' : [socket_libs, airplay_gcrypt_dep],
     'enabled' : get_option('stream_outputs') and airplay_gcrypt_dep.found(),

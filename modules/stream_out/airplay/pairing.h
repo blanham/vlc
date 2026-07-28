@@ -102,4 +102,21 @@ int airplay_pairing_encrypt(airplay_pairing *, const uint8_t *in,
 int airplay_pairing_decrypt(airplay_pairing *, const uint8_t *in,
                             size_t in_len, uint8_t **out, size_t *out_len);
 
+/* -- Encrypted control connection (post pair-verify) -----------------------
+ * Opens a TCP connection, runs pair-verify on it, and leaves the socket ready
+ * for framed ChaCha20-Poly1305 HTTP exchanges. Requires READY state. */
+
+int airplay_pairing_control_connect(airplay_pairing *);
+void airplay_pairing_control_disconnect(airplay_pairing *);
+
+/* Sends a plaintext HTTP request and returns the plaintext HTTP response. */
+int airplay_pairing_control_exchange(airplay_pairing *,
+                                     const uint8_t *req, size_t req_len,
+                                     uint8_t **resp, size_t *resp_len);
+
+typedef int (*airplay_pair_control_exchange_cb)(void *opaque,
+    const uint8_t *req, size_t req_len, uint8_t **resp, size_t *resp_len);
+void airplay_pairing_set_control_exchange_for_tests(airplay_pairing *,
+    airplay_pair_control_exchange_cb cb, void *opaque);
+
 #endif

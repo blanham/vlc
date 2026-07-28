@@ -51,6 +51,11 @@ typedef int airplay_sock_t;
 #endif
 
 #define HAP_MIME_TLV8 "application/pairing+tlv8"
+#define HAP_CTRL_PACKET_MAX 0x400
+
+typedef int (*airplay_tlv_exchange_fn)(void *opaque, const char *path,
+                                       const uint8_t *req, size_t req_len,
+                                       uint8_t **resp, size_t *resp_len);
 
 struct airplay_pairing
 {
@@ -83,6 +88,12 @@ struct airplay_pairing
     uint8_t control_read_key[32];
     uint64_t write_nonce;
     uint64_t read_nonce;
+
+    airplay_sock_t control_fd;
+    bool control_connected;
+
+    airplay_pair_control_exchange_cb control_exchange_cb;
+    void *control_exchange_opaque;
 };
 
 static void
@@ -206,6 +217,7 @@ airplay_pairing_release(airplay_pairing *p)
     free(p->device_id);
     free(p->device_name);
     free(p->accessory_pairing_id);
+    airplay_pairing_control_disconnect(p);
     free(p);
 }
 
@@ -254,6 +266,17 @@ airplay_pairing_set_identity_ops_for_tests(airplay_pairing *p,
     p->identity_store_cb = store;
     p->identity_remove_cb = remove;
     p->identity_opaque = opaque;
+}
+
+void
+airplay_pairing_set_control_exchange_for_tests(airplay_pairing *p,
+                                               airplay_pair_control_exchange_cb cb,
+                                               void *opaque)
+{
+    if (p == NULL)
+        return;
+    p->control_exchange_cb = cb;
+    p->control_exchange_opaque = opaque;
 }
 
 /* -- identity persistence (real keystore, or test seam) -------------------- */
@@ -470,13 +493,13 @@ transport_send(airplay_pairing *p, const char *path, const uint8_t *req,
 }
 
 static int
-send_recv_tlv(airplay_pairing *p, const char *path,
-              const uint8_t *req, size_t req_len,
-              uint8_t **resp, size_t *resp_len)
+send_recv_tlv_ex(airplay_tlv_exchange_fn exchange, void *opaque,
+                 const char *path, const uint8_t *req, size_t req_len,
+                 uint8_t **resp, size_t *resp_len)
 {
     uint8_t *raw = NULL;
     size_t raw_len = 0;
-    if (transport_send(p, path, req, req_len, &raw, &raw_len) != 0)
+    if (exchange(opaque, path, req, req_len, &raw, &raw_len) != 0)
         return -1;
 
     if (hap_tlv_has(raw, raw_len, HAP_TLV_ERROR))
@@ -488,6 +511,24 @@ send_recv_tlv(airplay_pairing *p, const char *path,
     *resp = raw;
     *resp_len = raw_len;
     return 0;
+}
+
+static int
+transport_exchange_wrapper(void *opaque, const char *path,
+                           const uint8_t *req, size_t req_len,
+                           uint8_t **resp, size_t *resp_len)
+{
+    airplay_pairing *p = opaque;
+    return transport_send(p, path, req, req_len, resp, resp_len);
+}
+
+static int
+send_recv_tlv(airplay_pairing *p, const char *path,
+              const uint8_t *req, size_t req_len,
+              uint8_t **resp, size_t *resp_len)
+{
+    return send_recv_tlv_ex(transport_exchange_wrapper, p, path, req, req_len,
+                            resp, resp_len);
 }
 
 static bool
@@ -766,7 +807,16 @@ out:
 /* -- pair-verify (M1-M4) --------------------------------------------------- */
 
 static int
+do_verify_ex(airplay_pairing *p, airplay_tlv_exchange_fn exchange, void *opaque);
+
+static int
 do_verify(airplay_pairing *p)
+{
+    return do_verify_ex(p, transport_exchange_wrapper, p);
+}
+
+static int
+do_verify_ex(airplay_pairing *p, airplay_tlv_exchange_fn exchange, void *opaque)
 {
     int ret = -1;
     uint8_t eph_sk[32], eph_pk[32];
@@ -791,7 +841,8 @@ do_verify(airplay_pairing *p)
     uint8_t *req1_raw = NULL;
     size_t req1_len = 0;
     if (hap_tlv_buf_finish(&req1, &req1_raw, &req1_len) != 0 ||
-        send_recv_tlv(p, "/pair-verify", req1_raw, req1_len, &m2, &m2_len) != 0)
+        send_recv_tlv_ex(exchange, opaque, "/pair-verify", req1_raw, req1_len,
+                         &m2, &m2_len) != 0)
     {
         free(req1_raw);
         goto out;
@@ -909,7 +960,8 @@ do_verify(airplay_pairing *p)
     uint8_t *req3_raw = NULL;
     size_t req3_len = 0;
     if (hap_tlv_buf_finish(&req3, &req3_raw, &req3_len) != 0 ||
-        send_recv_tlv(p, "/pair-verify", req3_raw, req3_len, &m4, &m4_len) != 0)
+        send_recv_tlv_ex(exchange, opaque, "/pair-verify", req3_raw, req3_len,
+                         &m4, &m4_len) != 0)
     {
         free(req3_raw);
         goto out;
@@ -1057,4 +1109,372 @@ airplay_pairing_decrypt(airplay_pairing *p, const uint8_t *in, size_t in_len,
     *out = buf;
     *out_len = len;
     return 0;
+}
+
+/* -- persistent encrypted control connection -------------------------------- */
+
+static int
+socket_wsa_init(void)
+{
+#ifdef _WIN32
+    static bool wsa_ready = false;
+    if (!wsa_ready)
+    {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+            return -1;
+        wsa_ready = true;
+    }
+#endif
+    return 0;
+}
+
+static int
+pairing_open_socket(airplay_pairing *p, airplay_sock_t *out_fd)
+{
+    if (socket_wsa_init() != 0)
+        return -1;
+
+    char port_str[6];
+    snprintf(port_str, sizeof port_str, "%u", (unsigned)p->port);
+
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo *res = NULL;
+    if (getaddrinfo(p->ip, port_str, &hints, &res) != 0 || res == NULL)
+        return -1;
+
+    airplay_sock_t fd = AIRPLAY_SOCK_INVALID;
+    for (struct addrinfo *ai = res; ai != NULL; ai = ai->ai_next)
+    {
+        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd == AIRPLAY_SOCK_INVALID)
+            continue;
+        if (connect(fd, ai->ai_addr, (int)ai->ai_addrlen) == 0)
+            break;
+        airplay_sock_close(fd);
+        fd = AIRPLAY_SOCK_INVALID;
+    }
+    freeaddrinfo(res);
+    if (fd == AIRPLAY_SOCK_INVALID)
+        return -1;
+
+    *out_fd = fd;
+    return 0;
+}
+
+static int
+http_tlv_post_fd(airplay_sock_t fd, const char *host, uint16_t port,
+                   const char *path, const uint8_t *req, size_t req_len,
+                   uint8_t **out_resp, size_t *out_resp_len)
+{
+    char header[320];
+    int header_len = snprintf(header, sizeof header,
+        "POST %s HTTP/1.1\r\n"
+        "Host: %s:%u\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %lu\r\n"
+        "X-Apple-HKP: 3\r\n"
+        "Connection: close\r\n\r\n",
+        path, host, (unsigned)port, HAP_MIME_TLV8,
+        (unsigned long)req_len);
+    if (header_len < 0 || (size_t)header_len >= sizeof header)
+        return -1;
+
+    if (send(fd, header, (size_t)header_len, 0) != header_len ||
+        (req_len > 0 &&
+         send(fd, (const char *)req, req_len, 0) != (long)req_len))
+        return -1;
+
+    size_t capacity = 4096, length = 0;
+    uint8_t *buffer = malloc(capacity);
+    if (buffer == NULL)
+        return -1;
+
+    for (;;)
+    {
+        if (length == capacity)
+        {
+            capacity *= 2;
+            uint8_t *grown = realloc(buffer, capacity);
+            if (grown == NULL)
+            {
+                free(buffer);
+                return -1;
+            }
+            buffer = grown;
+        }
+        long n = recv(fd, (char *)buffer + length, capacity - length, 0);
+        if (n < 0)
+        {
+            free(buffer);
+            return -1;
+        }
+        if (n == 0)
+            break;
+        length += (size_t)n;
+    }
+
+    const char *separator = "\r\n\r\n";
+    uint8_t *body = NULL;
+    for (size_t i = 0; i + 4 <= length; ++i)
+        if (memcmp(buffer + i, separator, 4) == 0)
+        {
+            body = buffer + i + 4;
+            break;
+        }
+    if (body == NULL)
+    {
+        free(buffer);
+        return -1;
+    }
+
+    size_t body_len = length - (size_t)(body - buffer);
+    uint8_t *resp = body_len != 0 ? malloc(body_len) : NULL;
+    if (body_len != 0 && resp == NULL)
+    {
+        free(buffer);
+        return -1;
+    }
+    if (body_len != 0)
+        memcpy(resp, body, body_len);
+    free(buffer);
+
+    *out_resp = resp;
+    *out_resp_len = body_len;
+    return 0;
+}
+
+typedef struct tlv_fd_ctx
+{
+    airplay_pairing *pairing;
+    airplay_sock_t fd;
+} tlv_fd_ctx;
+
+static int
+fd_tlv_exchange(void *opaque, const char *path, const uint8_t *req,
+                size_t req_len, uint8_t **resp, size_t *resp_len)
+{
+    tlv_fd_ctx *ctx = opaque;
+    return http_tlv_post_fd(ctx->fd, ctx->pairing->ip, ctx->pairing->port,
+                            path, req, req_len, resp, resp_len);
+}
+
+static ssize_t
+http_body_length(const uint8_t *msg, size_t header_end)
+{
+    static const char needle[] = "Content-Length:";
+    for (size_t i = 0; i + sizeof needle - 1 <= header_end; ++i)
+    {
+        if (memcmp(msg + i, needle, sizeof needle - 1) != 0)
+            continue;
+        const char *cursor = (const char *)msg + i + sizeof needle - 1;
+        while (cursor < (const char *)msg + header_end && *cursor == ' ')
+            cursor++;
+        char *end = NULL;
+        long value = strtol(cursor, &end, 10);
+        if (end == cursor || value < 0)
+            return -1;
+        return (ssize_t)value;
+    }
+    return 0;
+}
+
+static bool
+http_response_complete(const uint8_t *buf, size_t len, size_t *out_total)
+{
+    static const char separator[] = "\r\n\r\n";
+    size_t header_end = 0;
+    for (size_t i = 0; i + 4 <= len; ++i)
+        if (memcmp(buf + i, separator, 4) == 0)
+        {
+            header_end = i + 4;
+            break;
+        }
+    if (header_end == 0)
+        return false;
+
+    ssize_t body_len = http_body_length(buf, header_end);
+    if (body_len < 0)
+        return false;
+
+    *out_total = header_end + (size_t)body_len;
+    return len >= *out_total;
+}
+
+static int
+sock_recv_full(airplay_sock_t fd, uint8_t *buf, size_t len)
+{
+    size_t got = 0;
+    while (got < len)
+    {
+        long n = recv(fd, (char *)buf + got, len - got, 0);
+        if (n <= 0)
+            return -1;
+        got += (size_t)n;
+    }
+    return 0;
+}
+
+static int
+control_read_frame(airplay_pairing *p, uint8_t **out, size_t *out_len)
+{
+    uint8_t hdr[2];
+    if (sock_recv_full(p->control_fd, hdr, sizeof hdr) != 0)
+        return -1;
+
+    size_t plain_len = hdr[0] | ((size_t)hdr[1] << 8);
+    if (plain_len == 0 || plain_len > HAP_CTRL_PACKET_MAX)
+        return -1;
+
+    uint8_t *wire = malloc(plain_len + 16);
+    if (wire == NULL)
+        return -1;
+    if (sock_recv_full(p->control_fd, wire, plain_len + 16) != 0)
+    {
+        free(wire);
+        return -1;
+    }
+
+    int rc = airplay_pairing_decrypt(p, wire, plain_len + 16, out, out_len);
+    free(wire);
+    return rc;
+}
+
+static int
+control_write_plain(airplay_pairing *p, const uint8_t *data, size_t len)
+{
+    size_t offset = 0;
+    while (offset < len)
+    {
+        size_t chunk = len - offset;
+        if (chunk > HAP_CTRL_PACKET_MAX)
+            chunk = HAP_CTRL_PACKET_MAX;
+
+        uint8_t *enc = NULL;
+        size_t enc_len = 0;
+        if (airplay_pairing_encrypt(p, data + offset, chunk, &enc, &enc_len) != 0)
+            return -1;
+
+        uint8_t hdr[2] = {
+            (uint8_t)(chunk & 0xff),
+            (uint8_t)((chunk >> 8) & 0xff),
+        };
+        int rc = -1;
+        if (send(p->control_fd, (const char *)hdr, sizeof hdr, 0) == (long)sizeof hdr &&
+            send(p->control_fd, (const char *)enc, enc_len, 0) == (long)enc_len)
+            rc = 0;
+        free(enc);
+        if (rc != 0)
+            return -1;
+        offset += chunk;
+    }
+    return 0;
+}
+
+static int
+control_read_http(airplay_pairing *p, uint8_t **out, size_t *out_len)
+{
+    size_t cap = 4096, len = 0;
+    uint8_t *buf = malloc(cap);
+    if (buf == NULL)
+        return -1;
+
+    for (;;)
+    {
+        uint8_t *chunk = NULL;
+        size_t chunk_len = 0;
+        if (control_read_frame(p, &chunk, &chunk_len) != 0)
+        {
+            free(buf);
+            free(chunk);
+            return -1;
+        }
+
+        if (len + chunk_len > cap)
+        {
+            cap = (len + chunk_len) * 2;
+            uint8_t *grown = realloc(buf, cap);
+            if (grown == NULL)
+            {
+                free(buf);
+                free(chunk);
+                return -1;
+            }
+            buf = grown;
+        }
+        memcpy(buf + len, chunk, chunk_len);
+        len += chunk_len;
+        free(chunk);
+
+        size_t total = 0;
+        if (http_response_complete(buf, len, &total))
+        {
+            uint8_t *trimmed = realloc(buf, total);
+            if (trimmed != NULL)
+                buf = trimmed;
+            *out = buf;
+            *out_len = total;
+            return 0;
+        }
+    }
+}
+
+static int
+default_control_exchange(airplay_pairing *p, const uint8_t *req, size_t req_len,
+                         uint8_t **resp, size_t *resp_len)
+{
+    if (!p->control_connected)
+        return -1;
+    if (control_write_plain(p, req, req_len) != 0)
+        return -1;
+    return control_read_http(p, resp, resp_len);
+}
+
+void
+airplay_pairing_control_disconnect(airplay_pairing *p)
+{
+    if (p == NULL || !p->control_connected)
+        return;
+    airplay_sock_close(p->control_fd);
+    p->control_fd = AIRPLAY_SOCK_INVALID;
+    p->control_connected = false;
+}
+
+int
+airplay_pairing_control_connect(airplay_pairing *p)
+{
+    if (p == NULL || p->state != AIRPLAY_PAIR_READY)
+        return -1;
+    if (p->control_connected)
+        return 0;
+
+    if (pairing_open_socket(p, &p->control_fd) != 0)
+        return -1;
+
+    tlv_fd_ctx ctx = { p, p->control_fd };
+    if (do_verify_ex(p, fd_tlv_exchange, &ctx) != 0)
+    {
+        airplay_sock_close(p->control_fd);
+        p->control_fd = AIRPLAY_SOCK_INVALID;
+        return -1;
+    }
+
+    p->control_connected = true;
+    return 0;
+}
+
+int
+airplay_pairing_control_exchange(airplay_pairing *p, const uint8_t *req,
+                               size_t req_len, uint8_t **resp, size_t *resp_len)
+{
+    if (p == NULL || req == NULL || resp == NULL || resp_len == NULL)
+        return -1;
+    if (p->control_exchange_cb != NULL)
+        return p->control_exchange_cb(p->control_exchange_opaque, req, req_len,
+                                      resp, resp_len);
+    return default_control_exchange(p, req, req_len, resp, resp_len);
 }

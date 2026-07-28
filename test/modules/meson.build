@@ -336,3 +336,16 @@ vlc_tests += {
     'dependencies' : [airplay_gcrypt_dep],
     'enabled' : airplay_gcrypt_dep.found(),
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_session_plist',
+    'sources' : files(
+        'stream_out/airplay/session_plist.c',
+        'stream_out/airplay/session_stubs.c',
+        '../../modules/stream_out/airplay/session.c',
+        '../../modules/stream_out/airplay/plist.c'),
+    'suite' : ['modules', 'test_modules'],
+    'c_args' : ['-DAIRPLAY_PAIRING_STANDALONE', '-DAIRPLAY_CRYPTO_STANDALONE'],
+    'dependencies' : [airplay_gcrypt_dep],
+    'enabled' : airplay_gcrypt_dep.found(),
+}
