@@ -81,7 +81,7 @@ airplay_identity_unpack(const uint8_t *in, size_t len,
     out->has_peer = in[132];
     memcpy(out->controller_pairing_id, in + 133,
            sizeof(out->controller_pairing_id));
-  out->controller_pairing_id[sizeof(out->controller_pairing_id) - 1] = '\0';
+    out->controller_pairing_id[sizeof(out->controller_pairing_id) - 1] = '\0';
     return 0;
 }
 
