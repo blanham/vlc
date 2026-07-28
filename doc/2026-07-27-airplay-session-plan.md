@@ -396,7 +396,7 @@ int airplay_srp_client_finish(airplay_srp_ctx *,
                               const uint8_t *salt, size_t salt_len,
                               const uint8_t *B, size_t B_len,
                               uint8_t **M1, size_t *M1_len,
-                              uint8_t shared_key[32]);
+                              uint8_t shared_key[64]);
 int airplay_srp_client_verify_proof(airplay_srp_ctx *,
                                     const uint8_t *M2, size_t M2_len);
 ```
