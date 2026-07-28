@@ -20,12 +20,21 @@
 char *
 vlc_uri2path(const char *uri)
 {
+#ifdef _WIN32
     if (strcmp(uri, "file:///C:/foo/bar.mp4") == 0)
         return strdup("C:\\foo\\bar.mp4");
     if (strcmp(uri, "FILE:///C:/foo/bar.mp4") == 0)
         return strdup("C:\\foo\\bar.mp4");
     if (strcmp(uri, "fd://0") == 0)
         return strdup("CON");
+#else
+    if (strcmp(uri, "file:///tmp/foo.mp4") == 0)
+        return strdup("/tmp/foo.mp4");
+    if (strcmp(uri, "FILE:///tmp/foo.mp4") == 0)
+        return strdup("/tmp/foo.mp4");
+    if (strcmp(uri, "fd://0") == 0)
+        return strdup("/dev/stdin");
+#endif
     return NULL;
 }
 #endif
@@ -60,14 +69,17 @@ int
 main(void)
 {
 #ifdef _WIN32
+    const char *file_uri = "file:///C:/foo/bar.mp4";
+    const char *file_uri_upper = "FILE:///C:/foo/bar.mp4";
     const char *expected = "C:\\foo\\bar.mp4";
 #else
-    const char *expected = "/C:/foo/bar.mp4";
+    const char *file_uri = "file:///tmp/foo.mp4";
+    const char *file_uri_upper = "FILE:///tmp/foo.mp4";
+    const char *expected = "/tmp/foo.mp4";
 #endif
 
-    expect_path("file:///C:/foo/bar.mp4", expected,
-                "file URI becomes a local path");
-    expect_path("FILE:///C:/foo/bar.mp4", expected,
+    expect_path(file_uri, expected, "file URI becomes a local path");
+    expect_path(file_uri_upper, expected,
                 "file scheme is case insensitive");
     expect_null(airplay_path_from_uri("http://example.com/x"),
                 "HTTP URI is rejected");
