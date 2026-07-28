@@ -2,6 +2,7 @@ vlc_modules += {
     'name' : 'stream_out_airplay',
     'sources' : files(
         'airplay.c',
+        'crypto.c',
         'http_media.c',
         'keystore_id.c',
         'path.c',

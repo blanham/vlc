@@ -301,3 +301,14 @@ vlc_tests += {
     'suite' : ['modules', 'test_modules'],
     'link_with' : [libvlccore],
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_crypto',
+    'sources' : files(
+        'stream_out/airplay/crypto.c',
+        '../../modules/stream_out/airplay/crypto.c'),
+    'suite' : ['modules', 'test_modules'],
+    'link_with' : [libvlccore],
+    'dependencies' : [gcrypt_dep],
+    'enabled' : gcrypt_dep.found(),
+}
