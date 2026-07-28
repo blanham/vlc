@@ -17,7 +17,10 @@
 
 typedef struct vlc_object_t vlc_object_t;
 
-#define AIRPLAY_ID_BLOB_VERSION 1
+#define AIRPLAY_ID_BLOB_VERSION 2
+
+/** HAP controller pairing id (UUID string, NUL-terminated). */
+#define AIRPLAY_CONTROLLER_PAIRING_ID_LEN 37
 
 struct airplay_identity
 {
@@ -25,6 +28,7 @@ struct airplay_identity
     uint8_t our_ed25519_pk[32];
     uint8_t peer_ed25519_pk[32];
     uint8_t has_peer;
+    char controller_pairing_id[AIRPLAY_CONTROLLER_PAIRING_ID_LEN];
 };
 
 int airplay_identity_pack(const struct airplay_identity *, uint8_t **out,

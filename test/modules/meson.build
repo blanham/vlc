@@ -315,3 +315,24 @@ vlc_tests += {
     'dependencies' : [airplay_gcrypt_dep],
     'enabled' : airplay_gcrypt_dep.found(),
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_tlv',
+    'sources' : files(
+        'stream_out/airplay/tlv.c',
+        '../../modules/stream_out/airplay/tlv.c'),
+    'suite' : ['modules', 'test_modules'],
+}
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_pairing_fsm',
+    'sources' : files(
+        'stream_out/airplay/pairing_fsm.c',
+        '../../modules/stream_out/airplay/pairing.c',
+        '../../modules/stream_out/airplay/tlv.c',
+        '../../modules/stream_out/airplay/crypto.c'),
+    'suite' : ['modules', 'test_modules'],
+    'c_args' : ['-DAIRPLAY_PAIRING_STANDALONE', '-DAIRPLAY_CRYPTO_STANDALONE'],
+    'dependencies' : [airplay_gcrypt_dep],
+    'enabled' : airplay_gcrypt_dep.found(),
+}

@@ -16,7 +16,7 @@
 
 #include "../../../../modules/stream_out/airplay/keystore_id.h"
 
-#define IDENTITY_BLOB_SIZE (4 + 64 + 32 + 32 + 1)
+#define IDENTITY_BLOB_SIZE_V2 (4 + 64 + 32 + 32 + 1 + AIRPLAY_CONTROLLER_PAIRING_ID_LEN)
 
 static int failures;
 
@@ -42,6 +42,8 @@ make_identity(void)
     for (size_t i = 0; i < sizeof(id.peer_ed25519_pk); ++i)
         id.peer_ed25519_pk[i] = (uint8_t)(0xc0 + i);
     id.has_peer = 1;
+    snprintf(id.controller_pairing_id, sizeof id.controller_pairing_id,
+             "11111111-2222-3333-4444-555555555555");
     return id;
 }
 
@@ -56,8 +58,8 @@ test_pack_layout_and_round_trip(void)
     expect_true(airplay_identity_pack(&expected, &blob, &length) == 0,
                 "identity packs");
     expect_true(blob != NULL, "pack allocates a blob");
-    expect_true(length == IDENTITY_BLOB_SIZE, "blob has fixed size");
-    if (blob != NULL && length == IDENTITY_BLOB_SIZE)
+    expect_true(length == IDENTITY_BLOB_SIZE_V2, "blob has fixed size");
+    if (blob != NULL && length == IDENTITY_BLOB_SIZE_V2)
     {
         expect_true(blob[0] == AIRPLAY_ID_BLOB_VERSION &&
                     blob[1] == 0 && blob[2] == 0 && blob[3] == 0,
@@ -68,7 +70,10 @@ test_pack_layout_and_round_trip(void)
                     "public key follows secret key");
         expect_true(memcmp(blob + 100, expected.peer_ed25519_pk, 32) == 0,
                     "peer key follows public key");
-        expect_true(blob[132] == 1, "peer flag is last");
+        expect_true(blob[132] == 1, "peer flag precedes controller id");
+        expect_true(memcmp(blob + 133, expected.controller_pairing_id,
+                           sizeof(expected.controller_pairing_id)) == 0,
+                    "controller pairing id is last");
         expect_true(airplay_identity_unpack(blob, length, &actual) == 0,
                     "identity unpacks");
         expect_true(memcmp(&actual, &expected, sizeof(actual)) == 0,
@@ -100,10 +105,33 @@ test_unpack_rejects_invalid_blobs(void)
                 "unknown version is rejected");
     blob[0] = AIRPLAY_ID_BLOB_VERSION;
 
-    blob[length - 1] = 2;
+    blob[132] = 2;
     expect_true(airplay_identity_unpack(blob, length, &out) != 0,
                 "invalid peer flag is rejected");
     free(blob);
+}
+
+static void
+test_unpack_v1_backward_compat(void)
+{
+    struct airplay_identity expected = make_identity();
+    expected.controller_pairing_id[0] = '\0';
+
+    uint8_t blob[4 + 64 + 32 + 32 + 1];
+    blob[0] = 1;
+    blob[1] = blob[2] = blob[3] = 0;
+    memcpy(blob + 4, expected.our_ed25519_sk, 64);
+    memcpy(blob + 68, expected.our_ed25519_pk, 32);
+    memcpy(blob + 100, expected.peer_ed25519_pk, 32);
+    blob[132] = expected.has_peer;
+
+    struct airplay_identity actual;
+    expect_true(airplay_identity_unpack(blob, sizeof blob, &actual) == 0,
+                "v1 blob unpacks");
+    expect_true(actual.controller_pairing_id[0] == '\0',
+                "v1 blob leaves controller pairing id empty");
+    expect_true(memcmp(actual.our_ed25519_sk, expected.our_ed25519_sk, 64) == 0,
+                "v1 secret key preserved");
 }
 
 static void
@@ -119,7 +147,7 @@ test_invalid_arguments(void)
                 "pack rejects NULL data output");
     expect_true(airplay_identity_pack(&id, &blob, NULL) != 0,
                 "pack rejects NULL length output");
-    expect_true(airplay_identity_unpack(NULL, IDENTITY_BLOB_SIZE, &id) != 0,
+    expect_true(airplay_identity_unpack(NULL, IDENTITY_BLOB_SIZE_V2, &id) != 0,
                 "unpack rejects NULL data");
     expect_true(airplay_identity_unpack((const uint8_t *)&id, sizeof(id), NULL)
                 != 0, "unpack rejects NULL identity output");
@@ -130,6 +158,7 @@ main(void)
 {
     test_pack_layout_and_round_trip();
     test_unpack_rejects_invalid_blobs();
+    test_unpack_v1_backward_compat();
     test_invalid_arguments();
 
     if (failures != 0)

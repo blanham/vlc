@@ -19,7 +19,8 @@
 # include <vlc_keystore.h>
 #endif
 
-#define IDENTITY_BLOB_SIZE (4 + 64 + 32 + 32 + 1)
+#define IDENTITY_BLOB_SIZE_V1 (4 + 64 + 32 + 32 + 1)
+#define IDENTITY_BLOB_SIZE_V2 (IDENTITY_BLOB_SIZE_V1 + AIRPLAY_CONTROLLER_PAIRING_ID_LEN)
 
 int
 airplay_identity_pack(const struct airplay_identity *id, uint8_t **out,
@@ -28,7 +29,7 @@ airplay_identity_pack(const struct airplay_identity *id, uint8_t **out,
     if (id == NULL || out == NULL || len == NULL || id->has_peer > 1)
         return -1;
 
-    uint8_t *blob = malloc(IDENTITY_BLOB_SIZE);
+    uint8_t *blob = malloc(IDENTITY_BLOB_SIZE_V2);
     if (blob == NULL)
         return -1;
 
@@ -40,9 +41,11 @@ airplay_identity_pack(const struct airplay_identity *id, uint8_t **out,
     memcpy(blob + 68, id->our_ed25519_pk, sizeof(id->our_ed25519_pk));
     memcpy(blob + 100, id->peer_ed25519_pk, sizeof(id->peer_ed25519_pk));
     blob[132] = id->has_peer;
+    memcpy(blob + 133, id->controller_pairing_id,
+           sizeof(id->controller_pairing_id));
 
     *out = blob;
-    *len = IDENTITY_BLOB_SIZE;
+    *len = IDENTITY_BLOB_SIZE_V2;
     return 0;
 }
 
@@ -50,16 +53,35 @@ int
 airplay_identity_unpack(const uint8_t *in, size_t len,
                         struct airplay_identity *out)
 {
-    if (in == NULL || out == NULL || len != IDENTITY_BLOB_SIZE)
+    if (in == NULL || out == NULL)
         return -1;
-    if (in[0] != AIRPLAY_ID_BLOB_VERSION ||
-        in[1] != 0 || in[2] != 0 || in[3] != 0 || in[132] > 1)
+    if (in[1] != 0 || in[2] != 0 || in[3] != 0)
+        return -1;
+
+    memset(out, 0, sizeof(*out));
+
+    if (in[0] == 1 && len == IDENTITY_BLOB_SIZE_V1)
+    {
+        if (in[132] > 1)
+            return -1;
+        memcpy(out->our_ed25519_sk, in + 4, sizeof(out->our_ed25519_sk));
+        memcpy(out->our_ed25519_pk, in + 68, sizeof(out->our_ed25519_pk));
+        memcpy(out->peer_ed25519_pk, in + 100, sizeof(out->peer_ed25519_pk));
+        out->has_peer = in[132];
+        return 0;
+    }
+
+    if (in[0] != AIRPLAY_ID_BLOB_VERSION || len != IDENTITY_BLOB_SIZE_V2 ||
+        in[132] > 1)
         return -1;
 
     memcpy(out->our_ed25519_sk, in + 4, sizeof(out->our_ed25519_sk));
     memcpy(out->our_ed25519_pk, in + 68, sizeof(out->our_ed25519_pk));
     memcpy(out->peer_ed25519_pk, in + 100, sizeof(out->peer_ed25519_pk));
     out->has_peer = in[132];
+    memcpy(out->controller_pairing_id, in + 133,
+           sizeof(out->controller_pairing_id));
+  out->controller_pairing_id[sizeof(out->controller_pairing_id) - 1] = '\0';
     return 0;
 }
 
