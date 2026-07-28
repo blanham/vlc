@@ -522,7 +522,7 @@ airplay_srp_client_finish(airplay_srp_ctx *ctx,
                            const uint8_t *salt, size_t salt_len,
                            const uint8_t *B, size_t B_len,
                            uint8_t **M1, size_t *M1_len,
-                           uint8_t shared_key[32])
+                           uint8_t shared_key[64])
 {
     if (ctx == NULL || ctx->a == NULL || ctx->A == NULL || salt == NULL ||
         salt_len == 0 || B == NULL || B_len == 0 || M1 == NULL ||
@@ -604,7 +604,7 @@ airplay_srp_client_finish(airplay_srp_ctx *ctx,
     sha512_parts(k_session, s_buf, sizeof s_buf, (const uint8_t *)NULL);
     memcpy(ctx->K, k_session, sizeof k_session);
     ctx->have_secret = true;
-    memcpy(shared_key, k_session, 32);
+    memcpy(shared_key, k_session, sizeof k_session);
 
     uint8_t hn[64], hg[64], hn_xor_hg[64], hi[64];
     uint8_t n_buf[SRP_N_BYTES], g_buf[SRP_N_BYTES];

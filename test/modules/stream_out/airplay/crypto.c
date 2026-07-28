@@ -293,7 +293,7 @@ test_srp_client_self_consistency(void)
 
     uint8_t *m1 = NULL;
     size_t m1_len = 0;
-    uint8_t shared_key[32];
+    uint8_t shared_key[64];
 
     /* A syntactically valid, arithmetically arbitrary nonzero B: a real
      * client cannot itself validate the accessory's proof of knowledge
@@ -306,6 +306,11 @@ test_srp_client_self_consistency(void)
                                                &m1, &m1_len, shared_key);
     expect_true(finish_rc == 0, "srp client finish accepts a nonzero B");
     expect_true(m1 != NULL && m1_len == 64, "srp client M1 has SHA-512 width");
+
+    static const uint8_t zero64[64] = { 0 };
+    expect_true(!buffers_equal(shared_key, zero64, sizeof shared_key),
+                "srp client shared_key fills the full 64-byte SHA-512 "
+                "output width (not just the low 32 bytes)");
 
     free(m1);
     free(client_a);
@@ -334,7 +339,7 @@ test_srp_rejects_malformed_b(void)
 
     uint8_t *m1 = NULL;
     size_t m1_len = 0;
-    uint8_t shared_key[32];
+    uint8_t shared_key[64];
     expect_true(airplay_srp_client_finish(client, salt, sizeof salt, zero_b,
                     sizeof zero_b, &m1, &m1_len, shared_key) != 0,
                 "srp client finish rejects B == 0 (mod N)");
@@ -370,7 +375,7 @@ test_srp_verify_proof_rejects_mismatch(void)
 
     uint8_t *m1 = NULL;
     size_t m1_len = 0;
-    uint8_t shared_key[32];
+    uint8_t shared_key[64];
     airplay_srp_client_finish(client, salt, sizeof salt, b, sizeof b,
                                &m1, &m1_len, shared_key);
 

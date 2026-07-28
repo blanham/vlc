@@ -70,10 +70,11 @@ int airplay_hkdf_sha512(uint8_t *out, size_t out_len,
  *   airplay_srp_client_verify_proof(ctx, M2, M2_len);
  *   airplay_srp_client_release(ctx);
  *
- * `shared_key` receives the low 32 bytes of K = SHA-512(S), which is
- * this module's chosen width for downstream HKDF-SHA512 use; there is no
- * publicly documented HAP requirement to truncate K, so this is a
- * deliberate, documented simplification pending real-device validation.
+ * `shared_key` receives the full 64-byte K = SHA-512(S). HAP Pair-Setup
+ * uses the complete, untruncated SRP session key as the HKDF-SHA512 IKM
+ * (input keying material) for deriving subsequent pairing keys; truncating
+ * K to 32 bytes would silently discard entropy the HAP spec requires and
+ * break interop with real accessories.
  */
 typedef struct airplay_srp_ctx airplay_srp_ctx;
 
@@ -86,7 +87,7 @@ int airplay_srp_client_finish(airplay_srp_ctx *,
                                const uint8_t *salt, size_t salt_len,
                                const uint8_t *B, size_t B_len,
                                uint8_t **M1, size_t *M1_len,
-                               uint8_t shared_key[32]);
+                               uint8_t shared_key[64]);
 
 int airplay_srp_client_verify_proof(airplay_srp_ctx *,
                                      const uint8_t *M2, size_t M2_len);
