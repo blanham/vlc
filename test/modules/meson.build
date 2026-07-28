@@ -301,3 +301,17 @@ vlc_tests += {
     'suite' : ['modules', 'test_modules'],
     'link_with' : [libvlccore],
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_crypto',
+    'sources' : files(
+        'stream_out/airplay/crypto.c',
+        '../../modules/stream_out/airplay/crypto.c'),
+    'suite' : ['modules', 'test_modules'],
+    'link_with' : [libvlccore],
+    # Needs the same >= 1.10.0 libgcrypt floor as the airplay module itself
+    # (see modules/stream_out/airplay/meson.build); gcrypt_dep alone is only
+    # guaranteed >= 1.6.0.
+    'dependencies' : [airplay_gcrypt_dep],
+    'enabled' : airplay_gcrypt_dep.found(),
+}
