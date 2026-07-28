@@ -283,3 +283,12 @@ vlc_tests += {
     'suite' : ['modules', 'test_modules'],
     'link_with' : [libvlccore],
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_path',
+    'sources' : files(
+        'stream_out/airplay/path.c',
+        '../../modules/stream_out/airplay/path.c'),
+    'suite' : ['modules', 'test_modules'],
+    'link_with' : [libvlccore],
+}
