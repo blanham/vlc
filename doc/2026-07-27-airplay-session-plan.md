@@ -238,7 +238,9 @@ URL shape (exact): `http://<lan-ip>:<port>/airplay/<token>/media.mp4`
 
 Implementation notes:
 - `vlc_http_HostNew(obj)` then `httpd_UrlNew` + `httpd_UrlCatch` for GET/HEAD.
-- Validate token from URL path; on mismatch answer 403 with empty body.
+- Reject unauthorized GETs: core httpd exact-path match yields **404** for
+  unknown tokens (accepted); callback returns empty **403** only if a
+  mismatch reaches it.
 - Serve file with `Accept-Ranges: bytes` and honor `Range` (206) — Apple TV scrubbing needs this.
 - MIME `video/mp4`.
 - Token from `vlc_rand_bytes` / gcrypt strong random.

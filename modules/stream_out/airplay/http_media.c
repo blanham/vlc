@@ -360,6 +360,10 @@ airplay_http_media_start(vlc_object_t *obj, uint16_t http_port,
     if (media->host == NULL)
         goto error;
 
+    /* Exact-path registration: unknown tokens never reach the callback and
+     * receive the core httpd 404. That rejection is accepted for this
+     * tranche (token obscurity); callback still returns 403 if a mismatch
+     * somehow reaches it. */
     media->url = httpd_UrlNew(media->host, media->url_path, NULL, NULL);
     if (media->url == NULL)
         goto error;
