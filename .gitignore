@@ -63,3 +63,7 @@ static-lib/
 !buildsystem/
 !build.rs
 !extras/package/apple/build.sh
+
+# Local agent worktrees
+.worktrees/
+
