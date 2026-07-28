@@ -292,3 +292,12 @@ vlc_tests += {
     'suite' : ['modules', 'test_modules'],
     'link_with' : [libvlccore],
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_keystore_id',
+    'sources' : files(
+        'stream_out/airplay/keystore_id.c',
+        '../../modules/stream_out/airplay/keystore_id.c'),
+    'suite' : ['modules', 'test_modules'],
+    'link_with' : [libvlccore],
+}

@@ -1,0 +1,152 @@
+/*****************************************************************************
+ * keystore_id.c: AirPlay pairing identity keystore helper
+ *****************************************************************************
+ * Copyright (C) 2026 VLC authors and VideoLAN
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 2.1 of the License, or
+ * (at your option) any later version.
+ *****************************************************************************/
+
+#include "keystore_id.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#ifndef AIRPLAY_KEYSTORE_ID_PACK_ONLY
+# include <vlc_common.h>
+# include <vlc_keystore.h>
+#endif
+
+#define IDENTITY_BLOB_SIZE (4 + 64 + 32 + 32 + 1)
+
+int
+airplay_identity_pack(const struct airplay_identity *id, uint8_t **out,
+                      size_t *len)
+{
+    if (id == NULL || out == NULL || len == NULL || id->has_peer > 1)
+        return -1;
+
+    uint8_t *blob = malloc(IDENTITY_BLOB_SIZE);
+    if (blob == NULL)
+        return -1;
+
+    blob[0] = AIRPLAY_ID_BLOB_VERSION;
+    blob[1] = 0;
+    blob[2] = 0;
+    blob[3] = 0;
+    memcpy(blob + 4, id->our_ed25519_sk, sizeof(id->our_ed25519_sk));
+    memcpy(blob + 68, id->our_ed25519_pk, sizeof(id->our_ed25519_pk));
+    memcpy(blob + 100, id->peer_ed25519_pk, sizeof(id->peer_ed25519_pk));
+    blob[132] = id->has_peer;
+
+    *out = blob;
+    *len = IDENTITY_BLOB_SIZE;
+    return 0;
+}
+
+int
+airplay_identity_unpack(const uint8_t *in, size_t len,
+                        struct airplay_identity *out)
+{
+    if (in == NULL || out == NULL || len != IDENTITY_BLOB_SIZE)
+        return -1;
+    if (in[0] != AIRPLAY_ID_BLOB_VERSION ||
+        in[1] != 0 || in[2] != 0 || in[3] != 0 || in[132] > 1)
+        return -1;
+
+    memcpy(out->our_ed25519_sk, in + 4, sizeof(out->our_ed25519_sk));
+    memcpy(out->our_ed25519_pk, in + 68, sizeof(out->our_ed25519_pk));
+    memcpy(out->peer_ed25519_pk, in + 100, sizeof(out->peer_ed25519_pk));
+    out->has_peer = in[132];
+    return 0;
+}
+
+#ifndef AIRPLAY_KEYSTORE_ID_PACK_ONLY
+static void
+identity_values(const char *device_id, const char *values[KEY_MAX])
+{
+    VLC_KEYSTORE_VALUES_INIT(values);
+    values[KEY_PROTOCOL] = "airplay";
+    values[KEY_SERVER] = device_id;
+}
+
+static void
+secret_clear(uint8_t *secret, size_t length)
+{
+    volatile uint8_t *cursor = secret;
+    while (length-- > 0)
+        *cursor++ = 0;
+}
+
+int
+airplay_identity_store(vlc_object_t *obj, const char *device_id,
+                       const char *label, const struct airplay_identity *id)
+{
+    if (obj == NULL || device_id == NULL || device_id[0] == '\0' || id == NULL)
+        return VLC_EINVAL;
+
+    uint8_t *blob;
+    size_t length;
+    if (airplay_identity_pack(id, &blob, &length) != 0)
+        return VLC_EGENERIC;
+
+    vlc_keystore *keystore = vlc_keystore_create(obj);
+    if (keystore == NULL)
+    {
+        secret_clear(blob, length);
+        free(blob);
+        return VLC_EGENERIC;
+    }
+
+    const char *values[KEY_MAX];
+    identity_values(device_id, values);
+    int result = vlc_keystore_store(keystore, values, blob, length, label);
+    vlc_keystore_release(keystore);
+    secret_clear(blob, length);
+    free(blob);
+    return result;
+}
+
+int
+airplay_identity_load(vlc_object_t *obj, const char *device_id,
+                      struct airplay_identity *out)
+{
+    if (obj == NULL || device_id == NULL || device_id[0] == '\0' || out == NULL)
+        return VLC_EINVAL;
+
+    vlc_keystore *keystore = vlc_keystore_create(obj);
+    if (keystore == NULL)
+        return VLC_EGENERIC;
+
+    const char *values[KEY_MAX];
+    identity_values(device_id, values);
+    vlc_keystore_entry *entries = NULL;
+    unsigned count = vlc_keystore_find(keystore, values, &entries);
+    int result = count == 0 ? VLC_EGENERIC :
+                 airplay_identity_unpack(entries[0].p_secret,
+                                         entries[0].i_secret_len, out);
+    if (count > 0)
+        vlc_keystore_release_entries(entries, count);
+    vlc_keystore_release(keystore);
+    return result == 0 ? VLC_SUCCESS : VLC_EGENERIC;
+}
+
+int
+airplay_identity_remove(vlc_object_t *obj, const char *device_id)
+{
+    if (obj == NULL || device_id == NULL || device_id[0] == '\0')
+        return VLC_EINVAL;
+
+    vlc_keystore *keystore = vlc_keystore_create(obj);
+    if (keystore == NULL)
+        return VLC_EGENERIC;
+
+    const char *values[KEY_MAX];
+    identity_values(device_id, values);
+    unsigned count = vlc_keystore_remove(keystore, values);
+    vlc_keystore_release(keystore);
+    return count > 0 ? VLC_SUCCESS : VLC_EGENERIC;
+}
+#endif

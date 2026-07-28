@@ -1,6 +1,11 @@
 vlc_modules += {
     'name' : 'stream_out_airplay',
-    'sources' : files('airplay.c', 'http_media.c', 'path.c', 'plist.c'),
+    'sources' : files(
+        'airplay.c',
+        'http_media.c',
+        'keystore_id.c',
+        'path.c',
+        'plist.c'),
     'dependencies' : [socket_libs, gcrypt_dep],
     'enabled' : get_option('stream_outputs') and gcrypt_dep.found(),
     'shortname' : 's_o_airp',
