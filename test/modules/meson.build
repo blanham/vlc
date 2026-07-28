@@ -266,3 +266,11 @@ vlc_tests += {
         '../../modules/services_discovery/airplay_discovery.c'),
     'suite' : ['modules', 'test_modules'],
 }
+
+vlc_tests += {
+    'name' : 'test_modules_airplay_plist',
+    'sources' : files(
+        'stream_out/airplay/plist.c',
+        '../../modules/stream_out/airplay/plist.c'),
+    'suite' : ['modules', 'test_modules'],
+}
