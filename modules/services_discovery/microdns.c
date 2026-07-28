@@ -121,7 +121,7 @@ static const struct mdns_renderer_protocol renderer_protocols[] = {
     {
         "_airplay._tcp.local",
         "airplay",
-        NULL, /* not connectable in this tranche */
+        "airplay",
         NULL,
         0,
         MDNS_KIND_AIRPLAY,
@@ -129,7 +129,7 @@ static const struct mdns_renderer_protocol renderer_protocols[] = {
     {
         "_raop._tcp.local",
         "airplay",
-        NULL,
+        "airplay",
         NULL,
         VLC_RENDERER_CAN_AUDIO,
         MDNS_KIND_RAOP,
@@ -591,6 +591,8 @@ airplay_publish( vlc_renderer_discovery_t *p_rd,
                  struct airplay_discovered_device *dev )
 {
     char *psz_name = NULL;
+    char *psz_uri = NULL;
+    char *psz_extra_sout = NULL;
     int flags = 0;
     struct vlc_renderer_item_desc desc;
     vlc_renderer_item_t *item;
@@ -630,16 +632,31 @@ airplay_publish( vlc_renderer_discovery_t *p_rd,
     if( dev->supports_video )
         flags |= VLC_RENDERER_CAN_VIDEO;
 
-    /* Intentionally no URI/sout: foundation tranche is discovery only. */
+    if( dev->airplay.valid )
+    {
+        const struct airplay_endpoint *ep = &dev->airplay;
+
+        if( asprintf( &psz_uri, "airplay://%s%s%s:%u",
+                      ep->ipv6 ? "[" : "", ep->host,
+                      ep->ipv6 ? "]" : "", ep->port ) < 0 )
+            goto error;
+        if( asprintf( &psz_extra_sout, "device-id=%s",
+                      dev->stable_id ) < 0 )
+            goto error;
+    }
+
     memset( &desc, 0, sizeof(desc) );
     desc.type = "airplay";
     desc.id = dev->stable_id;
     desc.name = psz_name;
-    desc.uri = NULL;
+    desc.uri = psz_uri;
+    desc.extra_sout = psz_extra_sout;
     desc.flags = flags;
     desc.capabilities = (uint64_t)flags;
 
     item = vlc_renderer_item_new_ex( &desc );
+    free( psz_extra_sout );
+    free( psz_uri );
     free( psz_name );
     if( item == NULL )
         return VLC_ENOMEM;
@@ -655,6 +672,12 @@ airplay_publish( vlc_renderer_discovery_t *p_rd,
     dev->renderer_item = item;
     dev->published = true;
     return VLC_SUCCESS;
+
+error:
+    free( psz_extra_sout );
+    free( psz_uri );
+    free( psz_name );
+    return VLC_ENOMEM;
 }
 
 static void
