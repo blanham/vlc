@@ -16,6 +16,7 @@
 
 #ifndef AIRPLAY_KEYSTORE_ID_PACK_ONLY
 # include <vlc_common.h>
+# include <vlc_configuration.h>
 # include <vlc_keystore.h>
 #endif
 
@@ -94,6 +95,32 @@ identity_values(const char *device_id, const char *values[KEY_MAX])
     values[KEY_SERVER] = device_id;
 }
 
+/* Point this object at the plaintext file keystore before vlc_keystore_create
+ * walks the config. The packaged build otherwise has no module named "any". */
+static int
+prepare_file_keystore(vlc_object_t *obj)
+{
+    char *dir = config_GetUserDir(VLC_USERDATA_DIR);
+    if (dir == NULL)
+        return VLC_EGENERIC;
+
+    char path[1024];
+#ifdef _WIN32
+    int n = snprintf(path, sizeof path, "%s\\airplay-keystore", dir);
+#else
+    int n = snprintf(path, sizeof path, "%s/airplay-keystore", dir);
+#endif
+    free(dir);
+    if (n < 0 || (size_t)n >= sizeof path)
+        return VLC_EGENERIC;
+
+    var_Create(obj, "keystore", VLC_VAR_STRING);
+    var_SetString(obj, "keystore", "file_plaintext");
+    var_Create(obj, "keystore-file", VLC_VAR_STRING);
+    var_SetString(obj, "keystore-file", path);
+    return VLC_SUCCESS;
+}
+
 static void
 secret_clear(uint8_t *secret, size_t length)
 {
@@ -113,6 +140,13 @@ airplay_identity_store(vlc_object_t *obj, const char *device_id,
     size_t length;
     if (airplay_identity_pack(id, &blob, &length) != 0)
         return VLC_EGENERIC;
+
+    if (prepare_file_keystore(obj) != VLC_SUCCESS)
+    {
+        secret_clear(blob, length);
+        free(blob);
+        return VLC_EGENERIC;
+    }
 
     vlc_keystore *keystore = vlc_keystore_create(obj);
     if (keystore == NULL)
@@ -138,6 +172,9 @@ airplay_identity_load(vlc_object_t *obj, const char *device_id,
     if (obj == NULL || device_id == NULL || device_id[0] == '\0' || out == NULL)
         return VLC_EINVAL;
 
+    if (prepare_file_keystore(obj) != VLC_SUCCESS)
+        return VLC_EGENERIC;
+
     vlc_keystore *keystore = vlc_keystore_create(obj);
     if (keystore == NULL)
         return VLC_EGENERIC;
@@ -160,6 +197,9 @@ airplay_identity_remove(vlc_object_t *obj, const char *device_id)
 {
     if (obj == NULL || device_id == NULL || device_id[0] == '\0')
         return VLC_EINVAL;
+
+    if (prepare_file_keystore(obj) != VLC_SUCCESS)
+        return VLC_EGENERIC;
 
     vlc_keystore *keystore = vlc_keystore_create(obj);
     if (keystore == NULL)

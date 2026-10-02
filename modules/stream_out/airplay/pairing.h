@@ -24,7 +24,8 @@ enum airplay_pair_state {
     AIRPLAY_PAIR_NEED_PIN,
     AIRPLAY_PAIR_SETUP,
     AIRPLAY_PAIR_VERIFY,
-    AIRPLAY_PAIR_READY,
+    AIRPLAY_PAIR_PAIRED,   /* setup complete; verify deferred until playback */
+    AIRPLAY_PAIR_READY,    /* pair-verify done; encrypted control active */
     AIRPLAY_PAIR_FAILED,
 };
 
@@ -52,11 +53,11 @@ void airplay_pairing_set_accessory_info(airplay_pairing *,
                                         const char *accessory_pairing_id);
 
 /**
- * Loads a previously stored identity from the keystore and runs pair-verify;
- * if no identity is stored (or verify fails against a stale one), prompts
- * for a PIN and runs pair-setup once before verifying again.
+ * Loads a previously stored identity from the keystore and runs pair-setup
+ * when needed. Pair-verify is deferred until the control channel connects
+ * immediately before playback.
  *
- * Returns VLC_SUCCESS and leaves the state machine in AIRPLAY_PAIR_READY, or
+ * Returns VLC_SUCCESS and leaves the state machine in AIRPLAY_PAIR_PAIRED, or
  * a VLC error code with the state left at AIRPLAY_PAIR_NEED_PIN (no PIN
  * available yet; safe to call again once one is) or AIRPLAY_PAIR_FAILED
  * (the accessory rejected pairing outright).
@@ -64,6 +65,9 @@ void airplay_pairing_set_accessory_info(airplay_pairing *,
 int airplay_pairing_ensure(airplay_pairing *);
 
 enum airplay_pair_state airplay_pairing_state(const airplay_pairing *);
+
+/** User-facing failure reason after ensure() fails; NULL if none was recorded. */
+const char *airplay_pairing_error(const airplay_pairing *);
 
 /* -- Test seams -----------------------------------------------------------
  * Production code paths (dialog, network, keystore) are only reachable when
@@ -108,6 +112,9 @@ int airplay_pairing_decrypt(airplay_pairing *, const uint8_t *in,
 
 int airplay_pairing_control_connect(airplay_pairing *);
 void airplay_pairing_control_disconnect(airplay_pairing *);
+
+/* Connects to the receiver event port from SETUP and answers requests. */
+int airplay_pairing_event_listen(airplay_pairing *, uint16_t port);
 
 /* Sends a plaintext HTTP request and returns the plaintext HTTP response. */
 int airplay_pairing_control_exchange(airplay_pairing *,

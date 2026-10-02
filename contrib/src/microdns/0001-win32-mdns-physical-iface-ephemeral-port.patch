@@ -1,0 +1,76 @@
+--- a/src/mdns.c
++++ b/src/mdns.c
+@@ -33,6 +33,7 @@
+ #include <errno.h>
+ #include <time.h>
+ #include <stdint.h>
++#include <wchar.h>
+ 
+ #include "compat.h"
+ #include "utils.h"
+@@ -184,10 +185,35 @@
+ #else // _WIN32
+ 
+ static bool
++mdns_is_virtual_adapter(IP_ADAPTER_ADDRESSES *intf)
++{
++    static const wchar_t *const needles[] = {
++        L"VMware", L"Hyper-V", L"VirtualBox", L"vEthernet",
++        L"Wintun", L"TAP-", L"Bluetooth",
++        NULL
++    };
++    const wchar_t *desc = intf->Description ? intf->Description : L"";
++    const wchar_t *name = intf->FriendlyName ? intf->FriendlyName : L"";
++    for (size_t i = 0; needles[i] != NULL; ++i) {
++        if (wcsstr(desc, needles[i]) != NULL || wcsstr(name, needles[i]) != NULL)
++            return true;
++    }
++    return false;
++}
++
++static bool
+ mdns_is_interface_valuable(IP_ADAPTER_ADDRESSES *intf)
+ {
+-    return (intf->IfType == IF_TYPE_IEEE80211 || intf->IfType == IF_TYPE_ETHERNET_CSMACD) &&
+-            intf->OperStatus == IfOperStatusUp;
++    if (intf->OperStatus != IfOperStatusUp)
++        return false;
++    if (intf->IfType != IF_TYPE_IEEE80211 && intf->IfType != IF_TYPE_ETHERNET_CSMACD)
++        return false;
++    /* Multi-homed Windows PCs often have VMware/Hyper-V NICs that steal
++     * mDNS when every ethernet-class adapter joins 224.0.0.251:5353. Prefer
++     * physical LAN/Wi-Fi only. */
++    if (mdns_is_virtual_adapter(intf))
++        return false;
++    return true;
+ }
+ 
+ static size_t
+@@ -386,15 +412,22 @@
+                 if (setsockopt(ctx->conns[i].sock, SOL_SOCKET, SO_REUSEADDR, (const void *) &on_off, sizeof(on_off)) < 0)
+                         return mdns_destroy(ctx), (MDNS_NETERR);
+     #ifdef _WIN32
+-            /* bind the receiver on any local address */
++            /* Bind to the interface address with an ephemeral port.
++             *
++             * Binding every socket to 0.0.0.0:5353 races with browsers,
++             * Steam, ChatGPT, etc. on Windows (SO_REUSEADDR does not
++             * reliably deliver multicast to every listener). Queriers get
++             * unicast replies to the source port, which ephemeral ports
++             * handle correctly - matching how other mDNS clients work.
++             */
+             memset(&dumb, 0, sizeof(dumb));
+             dumb.ss.ss_family = ss_family(&ctx->addr);
+             if (dumb.ss.ss_family == AF_INET) {
+-                dumb.sin.sin_port = htons(port);
+-                dumb.sin.sin_addr.s_addr = INADDR_ANY;
++                dumb.sin.sin_port = 0;
++                dumb.sin.sin_addr = ctx->conns[i].mdns_ip.ipv4.addr;
+             } else {
+-                dumb.sin6.sin6_port = htons(port);
+-                dumb.sin6.sin6_addr = in6addr_any;
++                dumb.sin6.sin6_port = 0;
++                dumb.sin6.sin6_addr = ctx->conns[i].mdns_ip.ipv6.addr;
+             }
+ 
+             if (bind(ctx->conns[i].sock, (const struct sockaddr *) &dumb, ss_len(&dumb.ss)) < 0)

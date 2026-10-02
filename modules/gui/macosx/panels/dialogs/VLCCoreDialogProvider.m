@@ -44,6 +44,10 @@
                   username:(NSString *)username
                 askToStore:(BOOL)askToStore;
 
+- (void)displayPinDialog:(vlc_dialog_id *)dialogID
+                   title:(NSString *)title
+                    text:(NSString *)text;
+
 - (void)displayQuestion:(vlc_dialog_id *)dialogID
                   title:(NSString *)title
                    text:(NSString *)text
@@ -97,6 +101,21 @@ static void displayLoginCallback(void *p_data,
                                           text:text
                                       username:defaultUsername
                                     askToStore:b_ask_store];
+        });
+    }
+}
+
+static void displayPinCallback(void *p_data,
+                               vlc_dialog_id *p_id,
+                               const char *psz_title,
+                               const char *psz_text)
+{
+    @autoreleasepool {
+        VLCCoreDialogProvider *dialogProvider = (__bridge VLCCoreDialogProvider *)p_data;
+        NSString *title = toNSStr(psz_title);
+        NSString *text = toNSStr(psz_text);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [dialogProvider displayPinDialog:p_id title:title text:text];
         });
     }
 }
@@ -193,7 +212,8 @@ static void updateProgressCallback(void *p_data,
             displayQuestionCallback,
             displayProgressCallback,
             cancelCallback,
-            updateProgressCallback
+            updateProgressCallback,
+            displayPinCallback
         };
 
         vlc_dialog_provider_set_error_callback(p_intf, displayErrorCallback, (__bridge void *)self);
@@ -271,6 +291,28 @@ static void updateProgressCallback(void *p_data,
         [NSApp stopModalWithCode: 1];
     else
         [NSApp stopModalWithCode: 0];
+}
+
+- (void)displayPinDialog:(vlc_dialog_id *)dialogID
+                   title:(NSString *)title
+                    text:(NSString *)text
+{
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = title;
+    alert.informativeText = text;
+    [alert addButtonWithTitle:_NS("OK")];
+    [alert addButtonWithTitle:_NS("Cancel")];
+    [alert.buttons.lastObject setKeyEquivalent:[NSString stringWithFormat:@"%C", 0x1b]];
+
+    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 24)];
+    input.stringValue = @"";
+    alert.accessoryView = input;
+
+    NSInteger returnValue = [alert runModal];
+    if (returnValue == NSAlertFirstButtonReturn)
+        vlc_dialog_id_post_pin(dialogID, input.stringValue.UTF8String);
+    else
+        vlc_dialog_id_dismiss(dialogID);
 }
 
 - (void)displayQuestion:(vlc_dialog_id *)dialogID

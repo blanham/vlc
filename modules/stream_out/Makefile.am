@@ -168,7 +168,24 @@ demux_PLUGINS += libdemux_chromecast_plugin.la
 endif
 if HAVE_GCRYPT
 libstream_out_airplay_plugin_la_SOURCES = \
-	stream_out/airplay/airplay.c stream_out/airplay/airplay.h
+	stream_out/airplay/airplay.c \
+	stream_out/airplay/airplay.h \
+	stream_out/airplay/crypto.c \
+	stream_out/airplay/crypto.h \
+	stream_out/airplay/http_media.c \
+	stream_out/airplay/http_media.h \
+	stream_out/airplay/keystore_id.c \
+	stream_out/airplay/keystore_id.h \
+	stream_out/airplay/pairing.c \
+	stream_out/airplay/pairing.h \
+	stream_out/airplay/path.c \
+	stream_out/airplay/path.h \
+	stream_out/airplay/plist.c \
+	stream_out/airplay/plist.h \
+	stream_out/airplay/session.c \
+	stream_out/airplay/session.h \
+	stream_out/airplay/tlv.c \
+	stream_out/airplay/tlv.h
 libstream_out_airplay_plugin_la_LIBADD = $(SOCKET_LIBS) $(GCRYPT_LIBS)
 sout_PLUGINS += libstream_out_airplay_plugin.la
 endif

@@ -144,6 +144,8 @@ signals:
     Q_INVOKABLE void post_login(DialogId dialogId, const QString & username,
                     const QString & password, bool store = false);
 
+    Q_INVOKABLE void post_pin(DialogId dialogId, const QString & pin);
+
     Q_INVOKABLE void post_action1(DialogId dialogId);
     Q_INVOKABLE void post_action2(DialogId dialogId);
 
@@ -154,6 +156,8 @@ signals:
     void login(DialogId dialogId, const QString & title,
                const QString & text, const QString & defaultUsername,
                bool b_ask_store);
+
+    void pin(DialogId dialogId, const QString & title, const QString & text);
 
     void question(DialogId dialogId, const QString & title, const QString & text, VLCDialog::QuestionType type,
                   const QString & cancel, const QString & action1, const QString & action2);

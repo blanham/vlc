@@ -568,6 +568,7 @@ vlc_dialog_id_dismiss
 vlc_dialog_id_get_context
 vlc_dialog_id_post_action
 vlc_dialog_id_post_login
+vlc_dialog_id_post_pin
 vlc_dialog_id_set_context
 vlc_dialog_is_cancelled
 vlc_dialog_provider_set_callbacks
@@ -579,6 +580,8 @@ vlc_dialog_update_progress_text
 vlc_dialog_update_progress_text_va
 vlc_dialog_wait_login
 vlc_dialog_wait_login_va
+vlc_dialog_wait_pin
+vlc_dialog_wait_pin_va
 vlc_dialog_wait_question
 vlc_dialog_wait_question_va
 vlc_diffutil_build_snake

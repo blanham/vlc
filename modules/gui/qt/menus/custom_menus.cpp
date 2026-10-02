@@ -42,6 +42,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QActionGroup>
+#include <QPointer>
 #include <QWidgetAction>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -212,15 +213,21 @@ void ListMenuHelper::setIcon(QAction* action,  const QUrl& iconUrl)
         m_iconLoader->cancel();
     }
     m_iconLoader.reset(VLCAccessImageProvider::requestImageResponseUnWrapped(iconUrl, {64,64}));
-    connect(m_iconLoader.get(), &QQuickImageResponse::finished, this, [this, action] {
+    QPointer<QAction> safeAction(action);
+    connect(m_iconLoader.get(), &QQuickImageResponse::finished, this, [this, safeAction] {
+        /* The row can be removed while the image is still loading. The
+         * finished callback is queued and would otherwise assign a QIcon
+         * on the deleted action. */
+        if (!safeAction || m_iconLoader == nullptr)
+            return;
         std::unique_ptr<QQuickTextureFactory> factory(m_iconLoader->textureFactory());
         if (!factory)
         {
-            action->setIcon({});
+            safeAction->setIcon({});
             return;
         }
         QImage img = factory->image();
-        action->setIcon(QIcon(QPixmap::fromImage(img)));
+        safeAction->setIcon(QIcon(QPixmap::fromImage(img)));
     });
 }
 

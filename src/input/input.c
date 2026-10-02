@@ -1876,6 +1876,9 @@ static void ControlUpdateRenderer( input_thread_t *p_input, bool b_enable )
         input_resource_PutSout( input_priv(p_input)->p_resource,
                                 input_priv(p_input)->p_sout );
         input_priv(p_input)->p_sout = NULL;
+        /* A renderer session cannot be resumed. Leaving it parked makes the
+         * next cast reuse a shut-down output and the player hits EOF. */
+        input_resource_TerminateSout( input_priv(p_input)->p_resource );
     }
 }
 

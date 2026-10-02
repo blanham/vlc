@@ -19,6 +19,7 @@ $(TARBALLS)/microdns-$(LIBMICRODNS_VERSION).tar.xz:
 
 microdns: microdns-$(LIBMICRODNS_VERSION).tar.xz .sum-microdns
 	$(UNPACK)
+	$(APPLY) $(SRC)/microdns/0001-win32-mdns-physical-iface-ephemeral-port.patch
 	$(MOVE)
 
 .microdns: microdns crossfile.meson

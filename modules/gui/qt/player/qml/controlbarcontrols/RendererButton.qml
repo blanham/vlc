@@ -26,13 +26,21 @@ import VLC.Style
 import VLC.Player
 import VLC.Util
 
-Widgets.IconToolButton {
+Widgets.ImageToolButton {
     id: root
 
     signal requestLockUnlockAutoHide(bool lock)
 
-    text: VLCIcons.renderer
-    description: qsTr("Renderer")
+    text: qsTr("Renderer")
+    description: text
+
+    sourceSize: Qt.size(VLCStyle.icon_toolbar, VLCStyle.icon_toolbar)
+
+    imageSource: SVGColorImage.colorize("qrc:///icons/airplay.svg")
+        .color1(Player.rendererManager.useRenderer
+                ? root.colorContext.accent
+                : root.colorContext.fg.primary)
+        .uri()
 
     AccessibleCompat.id: "rendererButton"
 

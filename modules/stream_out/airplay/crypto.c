@@ -25,6 +25,10 @@
 #ifndef AIRPLAY_CRYPTO_STANDALONE
 # include <vlc_common.h>
 # include <vlc_gcrypt.h>
+# include <vlc_threads.h>
+/* This plugin links its own libgcrypt. Cipher calls from the control and
+ * event threads at the same time trip its process-wide lock and abort. */
+static vlc_mutex_t crypt_lock = VLC_STATIC_MUTEX;
 #endif
 
 void
@@ -34,6 +38,20 @@ airplay_crypto_init(void)
     gcry_check_version(NULL);
 #else
     vlc_gcrypt_init();
+#endif
+}
+
+void
+airplay_random_bytes(void *buf, size_t len)
+{
+    if (buf == NULL || len == 0)
+        return;
+#ifndef AIRPLAY_CRYPTO_STANDALONE
+    vlc_mutex_lock(&crypt_lock);
+#endif
+    gcry_randomize(buf, len, GCRY_STRONG_RANDOM);
+#ifndef AIRPLAY_CRYPTO_STANDALONE
+    vlc_mutex_unlock(&crypt_lock);
 #endif
 }
 
@@ -215,9 +233,12 @@ chacha_crypt(int encrypt, uint8_t *out, size_t *out_len,
         nonce == NULL || (ad == NULL && ad_len != 0))
         return -1;
 
+#ifndef AIRPLAY_CRYPTO_STANDALONE
+    vlc_mutex_lock(&crypt_lock);
+#endif
     if (gcry_cipher_open(&hd, GCRY_CIPHER_CHACHA20,
                           GCRY_CIPHER_MODE_POLY1305, 0) != 0)
-        return -1;
+        goto locked_out;
 
     if (gcry_cipher_setkey(hd, key, 32) != 0)
         goto out;
@@ -254,6 +275,10 @@ chacha_crypt(int encrypt, uint8_t *out, size_t *out_len,
 
 out:
     gcry_cipher_close(hd);
+locked_out:
+#ifndef AIRPLAY_CRYPTO_STANDALONE
+    vlc_mutex_unlock(&crypt_lock);
+#endif
     return ret;
 }
 
@@ -432,20 +457,37 @@ srp_compute_k(gcry_mpi_t n, gcry_mpi_t g, gcry_mpi_t *out_k)
 airplay_srp_ctx *
 airplay_srp_client_new(const char *pin)
 {
-    if (pin == NULL)
-        return NULL;
-
     airplay_srp_ctx *ctx = calloc(1, sizeof (*ctx));
     if (ctx == NULL)
         return NULL;
 
-    ctx->pin = strdup(pin);
-    if (ctx->pin == NULL)
+    if (pin != NULL)
     {
-        free(ctx);
-        return NULL;
+        ctx->pin = strdup(pin);
+        if (ctx->pin == NULL)
+        {
+            free(ctx);
+            return NULL;
+        }
     }
     return ctx;
+}
+
+int
+airplay_srp_client_set_pin(airplay_srp_ctx *ctx, const char *pin)
+{
+    if (ctx == NULL || pin == NULL || pin[0] == '\0' || ctx->have_secret)
+        return -1;
+
+    if (ctx->pin != NULL)
+    {
+        secure_clear(ctx->pin, strlen(ctx->pin));
+        free(ctx->pin);
+        ctx->pin = NULL;
+    }
+
+    ctx->pin = strdup(pin);
+    return ctx->pin != NULL ? 0 : -1;
 }
 
 void
@@ -524,9 +566,9 @@ airplay_srp_client_finish(airplay_srp_ctx *ctx,
                            uint8_t **M1, size_t *M1_len,
                            uint8_t shared_key[64])
 {
-    if (ctx == NULL || ctx->a == NULL || ctx->A == NULL || salt == NULL ||
-        salt_len == 0 || B == NULL || B_len == 0 || M1 == NULL ||
-        M1_len == NULL || shared_key == NULL)
+    if (ctx == NULL || ctx->pin == NULL || ctx->a == NULL || ctx->A == NULL ||
+        salt == NULL || salt_len == 0 || B == NULL || B_len == 0 ||
+        M1 == NULL || M1_len == NULL || shared_key == NULL)
         return -1;
 
     gcry_mpi_t n = NULL, g = NULL, k = NULL, big_b = NULL, u = NULL,
@@ -607,12 +649,17 @@ airplay_srp_client_finish(airplay_srp_ctx *ctx,
     memcpy(shared_key, k_session, sizeof k_session);
 
     uint8_t hn[64], hg[64], hn_xor_hg[64], hi[64];
-    uint8_t n_buf[SRP_N_BYTES], g_buf[SRP_N_BYTES];
-    if (mpi_to_padded(n, n_buf, sizeof n_buf) != 0 ||
-        mpi_to_padded(g, g_buf, sizeof g_buf) != 0)
+    uint8_t n_buf[SRP_N_BYTES];
+    if (mpi_to_padded(n, n_buf, sizeof n_buf) != 0)
         goto out;
     sha512_parts(hn, n_buf, sizeof n_buf, (const uint8_t *)NULL);
-    sha512_parts(hg, g_buf, sizeof g_buf, (const uint8_t *)NULL);
+    size_t g_len = 0;
+    gcry_mpi_print(GCRYMPI_FMT_USG, NULL, 0, &g_len, g);
+    uint8_t g_raw[SRP_N_BYTES];
+    if (g_len == 0 || g_len > sizeof g_raw ||
+        gcry_mpi_print(GCRYMPI_FMT_USG, g_raw, g_len, NULL, g) != 0)
+        goto out;
+    sha512_parts(hg, g_raw, g_len, (const uint8_t *)NULL);
     for (size_t i = 0; i < sizeof hn_xor_hg; i++)
         hn_xor_hg[i] = hn[i] ^ hg[i];
     sha512_parts(hi, (const uint8_t *)SRP_USERNAME,

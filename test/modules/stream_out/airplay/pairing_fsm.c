@@ -640,6 +640,14 @@ fake_transport(void *opaque, const char *path, const uint8_t *req,
               size_t req_len, uint8_t **resp, size_t *resp_len)
 {
     struct fake_accessory *acc = opaque;
+
+    if (strcmp(path, "/pair-pin-start") == 0)
+    {
+        *resp = NULL;
+        *resp_len = 0;
+        return 0;
+    }
+
     bool ok = false;
     uint8_t state = hap_tlv_get_u8(req, req_len, HAP_TLV_STATE, &ok);
     if (!ok)
@@ -774,15 +782,20 @@ test_setup_ok_verify_ok_ready(void)
     wire_fake_accessory(p, &acc);
 
     int ret = airplay_pairing_ensure(p);
-    expect_true(ret == 0, "ensure succeeds through setup + verify");
-    expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_READY,
-                "FSM reaches READY");
+    expect_true(ret == 0, "ensure succeeds through setup");
+    expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_PAIRED,
+                "FSM reaches PAIRED after setup");
     expect_true(fixture.store_calls == 1,
                 "identity is stored exactly once after a fresh pairing");
     expect_true(fixture.has_identity && fixture.identity.has_peer,
                 "stored identity records the accessory's peer key");
     expect_true(fixture.identity.controller_pairing_id[0] != '\0',
                 "stored identity records a controller pairing id");
+
+    expect_true(airplay_pairing_control_connect(p) == 0,
+                "control connect runs deferred verify");
+    expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_READY,
+                "FSM reaches READY after control verify");
 
     uint8_t *enc = NULL;
     size_t enc_len = 0;
@@ -824,11 +837,16 @@ test_load_identity_verify_ok_skips_pin(void)
     wire_fake_accessory(p, &acc);
 
     int ret = airplay_pairing_ensure(p);
-    expect_true(ret == 0, "ensure succeeds via verify alone");
-    expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_READY,
-                "FSM reaches READY without visiting NEED_PIN");
+    expect_true(ret == 0, "ensure succeeds via stored identity");
+    expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_PAIRED,
+                "FSM reaches PAIRED without visiting NEED_PIN");
     expect_true(fixture.store_calls == 0,
-                "no re-pairing occurs when the stored identity verifies");
+                "no re-pairing occurs when a stored identity is loaded");
+
+    expect_true(airplay_pairing_control_connect(p) == 0,
+                "control connect verifies stored identity");
+    expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_READY,
+                "FSM reaches READY after control verify");
 
     airplay_pairing_release(p);
 }
@@ -860,7 +878,12 @@ test_verify_fail_remove_needpin(void)
     wire_fake_accessory(p, &acc);
 
     int ret = airplay_pairing_ensure(p);
-    expect_true(ret != 0, "ensure reports failure without a PIN available");
+    expect_true(ret == 0, "ensure loads the stored identity");
+    expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_PAIRED,
+                "stale identity is accepted until control verify");
+
+    ret = airplay_pairing_control_connect(p);
+    expect_true(ret != 0, "control verify reports failure without a PIN");
     expect_true(airplay_pairing_state(p) == AIRPLAY_PAIR_NEED_PIN,
                 "stale identity is dropped and the FSM waits for a PIN");
     expect_true(fixture.remove_calls == 1,

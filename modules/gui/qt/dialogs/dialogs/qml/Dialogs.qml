@@ -57,6 +57,9 @@ Item {
         } if (loginDialog.dialogId !== null) {
             vlcDialog.dismiss(loginDialog.dialogId)
             loginDialog.dialogId = null
+        } if (pinDialog.dialogId !== null) {
+            vlcDialog.dismiss(pinDialog.dialogId)
+            pinDialog.dialogId = null
         }
     }
 
@@ -91,6 +94,13 @@ Item {
             loginDialog.title = title
             loginDialog.defaultUsername = defaultUsername
             loginDialog.open()
+        }
+
+        onPin: (dialogId, title, text) => {
+            pinDialog.dialogId = dialogId
+            pinDialog.title = title
+            pinDialog.text = text
+            pinDialog.open()
         }
 
         onQuestion: (dialogId, title, text, type, cancel, action1, action2) => {
@@ -130,6 +140,10 @@ Item {
             } else if (loginDialog.dialogId === dialogId)  {
                 loginDialog.close()
                 loginDialog.dialogId = null
+                dismiss(dialogId)
+            } else if (pinDialog.dialogId === dialogId) {
+                pinDialog.close()
+                pinDialog.dialogId = null
                 dismiss(dialogId)
             } else if (progressDialog.dialogId === dialogId) {
                 progressDialog.close()
@@ -413,6 +427,129 @@ Item {
             if (loginDialog.dialogId !== null) {
                 vlcDialog.dismiss(loginDialog.dialogId)
                 loginDialog.dialogId = null
+            }
+        }
+    }
+
+    ModalDialog {
+        id: pinDialog
+
+        property var dialogId: null
+        property string text: ""
+
+        onAboutToHide: restoreFocus()
+        rootWindow: root.bgContent
+
+        contentItem: ColumnLayout {
+            readonly property ColorContext colorContext: ColorContext {
+                id: pinContentTheme
+                palette: VLCStyle.palette
+                colorSet: ColorContext.Window
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: pinDialog.text
+                color: pinContentTheme.fg.primary
+                font.pixelSize: VLCStyle.fontSize_normal
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                text: qsTr("PIN")
+                color: pinContentTheme.fg.primary
+                font.pixelSize: VLCStyle.fontSize_normal
+            }
+
+            Widgets.TextFieldExt {
+                id: pinField
+                focus: true
+                Layout.fillWidth: true
+                inputMethodHints: Qt.ImhDigitsOnly
+                maximumLength: 8
+                echoMode: TextInput.Normal
+                font.pixelSize: VLCStyle.fontSize_normal
+                Navigation.downItem: pinOk
+                Keys.priority: Keys.AfterItem
+                Keys.onPressed: (event) => {
+                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (pinField.text.length > 0)
+                            pinOk.clicked()
+                        event.accepted = true
+                        return
+                    }
+                    Navigation.defaultKeyAction(event)
+                }
+            }
+        }
+
+        footer: FocusScope {
+            id: pinButtons
+            implicitHeight: VLCStyle.icon_normal
+
+            readonly property ColorContext colorContext: ColorContext {
+                id: pinFooterTheme
+                palette: VLCStyle.palette
+                colorSet: ColorContext.Window
+            }
+
+            Rectangle {
+                color: pinFooterTheme.bg.primary
+                anchors.fill: parent
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: VLCStyle.margin_xxsmall
+                    anchors.rightMargin: VLCStyle.margin_xxsmall
+
+                    Widgets.TextToolButton {
+                        id: pinCancel
+                        Layout.fillWidth: true
+                        text: qsTr("Cancel")
+
+                        Navigation.upItem: pinField
+                        Navigation.rightItem: pinOk
+                        Keys.priority: Keys.AfterItem
+                        Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
+
+                        onClicked: {
+                            pinDialog.reject()
+                            pinDialog.close()
+                        }
+                    }
+
+                    Widgets.TextToolButton {
+                        id: pinOk
+                        Layout.fillWidth: true
+                        text: qsTr("OK")
+                        enabled: pinField.text.length > 0
+
+                        Navigation.upItem: pinField
+                        Navigation.leftItem: pinCancel
+                        Keys.priority: Keys.AfterItem
+                        Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
+
+                        onClicked: {
+                            if (pinField.text.length === 0)
+                                return
+                            pinDialog.accept()
+                            pinDialog.close()
+                        }
+                    }
+                }
+            }
+        }
+
+        onAccepted: {
+            if (pinDialog.dialogId !== null && pinField.text.length > 0) {
+                vlcDialog.post_pin(pinDialog.dialogId, pinField.text)
+                pinDialog.dialogId = null
+            }
+        }
+        onRejected: {
+            if (pinDialog.dialogId !== null) {
+                vlcDialog.dismiss(pinDialog.dialogId)
+                pinDialog.dialogId = null
             }
         }
     }

@@ -188,6 +188,15 @@ void onDialogLogin(void * p_data, vlc_dialog_id * dialogId,
 
 }
 
+void onDialogPin(void * p_data, vlc_dialog_id * dialogId,
+                 const char * psz_title, const char * psz_text)
+{
+    VLCDialogModel * model = static_cast<VLCDialogModel *>(p_data);
+    model->dialogCallback(dialogId, [=](VLCDialog* provider){
+        emit provider->pin(dialogId, psz_title, psz_text);
+    });
+}
+
 void onDialogQuestion(void * p_data, vlc_dialog_id * dialogId,
                                           const char * psz_title, const char * psz_text,
                                           vlc_dialog_question_type i_type,
@@ -240,7 +249,7 @@ VLCDialogModel::VLCDialogModel(qt_intf_t* intf, QObject* parent)
     const vlc_dialog_cbs cbs =
         {
             onDialogLogin, onDialogQuestion, onDialogProgress,
-            onDialogCancelled, onDialogProgressUpdated
+            onDialogCancelled, onDialogProgressUpdated, onDialogPin
         };
     vlc_dialog_provider_set_callbacks(intf, &cbs, this);
 }
@@ -279,6 +288,10 @@ void VLCDialogModel::setProvider(VLCDialog* provider)
                 this, [](DialogId dialogId, const QString & username,
                         const QString & password, bool store){
                     vlc_dialog_id_post_login(dialogId.m_id, qtu(username), qtu(password), store);
+                });
+        connect(m_provider, &VLCDialog::post_pin,
+                this, [](DialogId dialogId, const QString & pin){
+                    vlc_dialog_id_post_pin(dialogId.m_id, qtu(pin));
                 });
         connect(m_provider, &VLCDialog::post_action1,
                 this, [](DialogId dialogId){

@@ -124,6 +124,23 @@ vlc_dialog_wait_login_va(vlc_object_t *p_obj, char **ppsz_username,
                          const char *psz_title, const char *psz_fmt, va_list ap);
 
 /**
+ * Requests a short numeric PIN (e.g. AirPlay / HAP pairing)
+ *
+ * @param ppsz_pin PIN string; must be freed with free() on success
+ * @return < 0 on error, 0 if cancelled, 1 on success
+ */
+VLC_API int
+vlc_dialog_wait_pin(vlc_object_t *p_obj, char **ppsz_pin,
+                    const char *psz_title, const char *psz_fmt, ...)
+                    VLC_FORMAT(4,5);
+#define vlc_dialog_wait_pin(a, b, c, d, ...) \
+    vlc_dialog_wait_pin(VLC_OBJECT(a), b, c, d, ##__VA_ARGS__)
+
+VLC_API int
+vlc_dialog_wait_pin_va(vlc_object_t *p_obj, char **ppsz_pin,
+                       const char *psz_title, const char *psz_fmt, va_list ap);
+
+/**
  * Asks a total (Yes/No/Cancel) question
  *
  * This function waits until the user dismisses the dialog or responds. It's
@@ -367,6 +384,15 @@ typedef struct vlc_dialog_cbs
      */
     void (*pf_update_progress)(void *p_data, vlc_dialog_id *p_id,
                                float f_position, const char *psz_text);
+
+    /**
+     * Called when a PIN entry dialog needs to be displayed
+     *
+     * Post the answer with vlc_dialog_id_post_pin() or dismiss with
+     * vlc_dialog_id_dismiss().
+     */
+    void (*pf_display_pin)(void *p_data, vlc_dialog_id *p_id,
+                           const char *psz_title, const char *psz_text);
 } vlc_dialog_cbs;
 
 /**
@@ -434,6 +460,15 @@ vlc_dialog_id_get_context(vlc_dialog_id *p_id);
 VLC_API int
 vlc_dialog_id_post_login(vlc_dialog_id *p_id, const char *psz_username,
                          const char *psz_password, bool b_store);
+
+/**
+ * Post a PIN answer
+ *
+ * @param p_id id of the dialog
+ * @param psz_pin valid non-empty PIN string
+ */
+VLC_API int
+vlc_dialog_id_post_pin(vlc_dialog_id *p_id, const char *psz_pin);
 
 /**
  * Post a question answer

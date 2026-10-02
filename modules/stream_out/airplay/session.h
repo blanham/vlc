@@ -24,10 +24,15 @@ airplay_session *airplay_session_new(vlc_object_t *obj, airplay_pairing *pair,
 void airplay_session_release(airplay_session *);
 
 int airplay_session_play(airplay_session *, const char *content_location,
-                         double start_position /* 0.0–1.0 */);
+                         double start_seconds, double duration_seconds);
+int airplay_session_requeue(airplay_session *, const char *content_location,
+                            double start_seconds);
 int airplay_session_rate(airplay_session *, double rate); /* 0 pause, 1 play */
-int airplay_session_scrub(airplay_session *, double position);
+int airplay_session_scrub(airplay_session *, double seconds);
+void airplay_session_arm_start_scrub(airplay_session *, double seconds);
+bool airplay_session_take_start_scrub(airplay_session *, double *seconds);
 int airplay_session_stop(airplay_session *);
+void airplay_session_quiesce(airplay_session *);
 int airplay_session_teardown(airplay_session *);
 
 /** Builds the binary plist body for POST /play (also used by unit tests). */

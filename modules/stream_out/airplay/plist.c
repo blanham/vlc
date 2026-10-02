@@ -15,7 +15,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum value_type { VALUE_STRING, VALUE_REAL, VALUE_DATA, VALUE_INTEGER };
+enum value_type {
+    VALUE_STRING, VALUE_REAL, VALUE_DATA, VALUE_INTEGER, VALUE_BOOL,
+    VALUE_DICT, VALUE_ARRAY
+};
 
 struct plist_entry
 {
@@ -29,6 +32,11 @@ struct plist_entry
             size_t length;
         } data;
         uint64_t integer;
+        struct airplay_plist *dict;
+        struct {
+            struct airplay_plist **items;
+            size_t count;
+        } array;
     } value;
 };
 
@@ -45,6 +53,9 @@ struct buffer
     size_t capacity;
 };
 
+static const struct plist_entry *
+entry_find(const airplay_plist *plist, const char *key);
+
 static char *
 string_dup(const char *value)
 {
@@ -56,13 +67,28 @@ string_dup(const char *value)
 }
 
 static void
-entry_clear(struct plist_entry *entry)
+entry_clear_value(struct plist_entry *entry)
 {
-    free(entry->key);
     if (entry->type == VALUE_STRING)
         free(entry->value.string);
     else if (entry->type == VALUE_DATA)
         free(entry->value.data.bytes);
+    else if (entry->type == VALUE_DICT)
+        airplay_plist_release(entry->value.dict);
+    else if (entry->type == VALUE_ARRAY)
+    {
+        for (size_t i = 0; i < entry->value.array.count; ++i)
+            airplay_plist_release(entry->value.array.items[i]);
+        free(entry->value.array.items);
+    }
+    entry->value.string = NULL;
+}
+
+static void
+entry_clear(struct plist_entry *entry)
+{
+    free(entry->key);
+    entry_clear_value(entry);
 }
 
 airplay_plist *
@@ -90,10 +116,7 @@ entry_prepare(airplay_plist *plist, const char *key)
     for (size_t i = 0; i < plist->count; ++i)
         if (strcmp(plist->entries[i].key, key) == 0)
         {
-            if (plist->entries[i].type == VALUE_STRING)
-                free(plist->entries[i].value.string);
-            else if (plist->entries[i].type == VALUE_DATA)
-                free(plist->entries[i].value.data.bytes);
+            entry_clear_value(&plist->entries[i]);
             return &plist->entries[i];
         }
 
@@ -142,6 +165,39 @@ airplay_plist_set_real(airplay_plist *plist, const char *key, double value)
 }
 
 int
+airplay_plist_set_integer(airplay_plist *plist, const char *key, uint64_t value)
+{
+    struct plist_entry *entry = entry_prepare(plist, key);
+    if (entry == NULL)
+        return -1;
+    entry->type = VALUE_INTEGER;
+    entry->value.integer = value;
+    return 0;
+}
+
+int
+airplay_plist_set_bool(airplay_plist *plist, const char *key, bool value)
+{
+    struct plist_entry *entry = entry_prepare(plist, key);
+    if (entry == NULL)
+        return -1;
+    entry->type = VALUE_BOOL;
+    entry->value.integer = value ? 1 : 0;
+    return 0;
+}
+
+int
+airplay_plist_get_integer(const airplay_plist *plist, const char *key,
+                          uint64_t *out)
+{
+    const struct plist_entry *entry = entry_find(plist, key);
+    if (out == NULL || entry == NULL || entry->type != VALUE_INTEGER)
+        return -1;
+    *out = entry->value.integer;
+    return 0;
+}
+
+int
 airplay_plist_set_data(airplay_plist *plist, const char *key, const void *data,
                        size_t length)
 {
@@ -161,6 +217,48 @@ airplay_plist_set_data(airplay_plist *plist, const char *key, const void *data,
     entry->type = VALUE_DATA;
     entry->value.data.bytes = copy;
     entry->value.data.length = length;
+    return 0;
+}
+
+int
+airplay_plist_set_dict(airplay_plist *plist, const char *key, airplay_plist *child)
+{
+    if (child == NULL)
+        return -1;
+    struct plist_entry *entry = entry_prepare(plist, key);
+    if (entry == NULL)
+    {
+        airplay_plist_release(child);
+        return -1;
+    }
+    entry->type = VALUE_DICT;
+    entry->value.dict = child;
+    return 0;
+}
+
+int
+airplay_plist_set_dict_array(airplay_plist *plist, const char *key,
+                            airplay_plist *item)
+{
+    if (item == NULL)
+        return -1;
+    struct airplay_plist **items = malloc(sizeof(*items));
+    if (items == NULL)
+    {
+        airplay_plist_release(item);
+        return -1;
+    }
+    items[0] = item;
+    struct plist_entry *entry = entry_prepare(plist, key);
+    if (entry == NULL)
+    {
+        airplay_plist_release(item);
+        free(items);
+        return -1;
+    }
+    entry->type = VALUE_ARRAY;
+    entry->value.array.items = items;
+    entry->value.array.count = 1;
     return 0;
 }
 
@@ -349,6 +447,11 @@ append_value(struct buffer *buffer, const struct plist_entry *entry)
         return append_marker(buffer, 0x40, entry->value.data.length) ||
                buffer_append(buffer, entry->value.data.bytes,
                              entry->value.data.length);
+    if (entry->type == VALUE_BOOL)
+    {
+        uint8_t marker = entry->value.integer ? 0x09 : 0x08;
+        return buffer_append(buffer, &marker, 1);
+    }
     if (entry->type == VALUE_REAL)
     {
         uint64_t bits;
@@ -364,63 +467,176 @@ append_value(struct buffer *buffer, const struct plist_entry *entry)
            append_uint(buffer, entry->value.integer, bytes);
 }
 
+struct object_writer
+{
+    struct buffer buffer;
+    uint64_t *offsets;
+    size_t count;
+    size_t capacity;
+    unsigned ref_size;
+};
+
+static size_t count_dict(const airplay_plist *);
+
+static size_t
+count_value(const struct plist_entry *entry)
+{
+    if (entry->type == VALUE_DICT)
+        return entry->value.dict != NULL ? count_dict(entry->value.dict) : 0;
+    if (entry->type != VALUE_ARRAY)
+        return 1;
+
+    size_t count = 1;
+    for (size_t i = 0; i < entry->value.array.count; ++i)
+    {
+        if (entry->value.array.items[i] == NULL)
+            return 0;
+        count += count_dict(entry->value.array.items[i]);
+    }
+    return count;
+}
+
+static size_t
+count_dict(const airplay_plist *plist)
+{
+    size_t count = 1;
+    for (size_t i = 0; i < plist->count; ++i)
+    {
+        size_t value = count_value(&plist->entries[i]);
+        if (value == 0 || count > SIZE_MAX - 1 - value)
+            return 0;
+        count += 1 + value;
+    }
+    return count;
+}
+
+static int
+writer_add(struct object_writer *writer, uint64_t *ref)
+{
+    if (writer->count == writer->capacity)
+    {
+        size_t capacity = writer->capacity != 0 ? writer->capacity * 2 : 16;
+        uint64_t *grown = realloc(writer->offsets, capacity * sizeof(*grown));
+        if (grown == NULL)
+            return -1;
+        writer->offsets = grown;
+        writer->capacity = capacity;
+    }
+    writer->offsets[writer->count] = writer->buffer.length;
+    *ref = writer->count++;
+    return 0;
+}
+
+static int write_dict(struct object_writer *, const airplay_plist *, uint64_t *);
+
+static int
+write_scalar(struct object_writer *writer, const struct plist_entry *entry,
+             uint64_t *ref)
+{
+    return writer_add(writer, ref) || append_value(&writer->buffer, entry);
+}
+
+static int
+write_array(struct object_writer *writer, const struct plist_entry *entry,
+            uint64_t *ref)
+{
+    size_t count = entry->value.array.count;
+    uint64_t *items = count != 0 ? malloc(count * sizeof(*items)) : NULL;
+    if (count != 0 && items == NULL)
+        return -1;
+    for (size_t i = 0; i < count; ++i)
+        if (write_dict(writer, entry->value.array.items[i], &items[i]))
+        {
+            free(items);
+            return -1;
+        }
+    int rc = writer_add(writer, ref) ||
+             append_marker(&writer->buffer, 0xa0, count);
+    for (size_t i = 0; rc == 0 && i < count; ++i)
+        rc = append_uint(&writer->buffer, items[i], writer->ref_size);
+    free(items);
+    return rc;
+}
+
+static int
+write_value(struct object_writer *writer, const struct plist_entry *entry,
+            uint64_t *ref)
+{
+    if (entry->type == VALUE_DICT)
+        return write_dict(writer, entry->value.dict, ref);
+    if (entry->type == VALUE_ARRAY)
+        return write_array(writer, entry, ref);
+    return write_scalar(writer, entry, ref);
+}
+
+static int
+write_dict(struct object_writer *writer, const airplay_plist *plist,
+           uint64_t *ref)
+{
+    if (plist == NULL)
+        return -1;
+    uint64_t *keys = plist->count != 0 ? malloc(plist->count * sizeof(*keys)) : NULL;
+    uint64_t *values = plist->count != 0 ? malloc(plist->count * sizeof(*values)) : NULL;
+    if (plist->count != 0 && (keys == NULL || values == NULL))
+    {
+        free(keys);
+        free(values);
+        return -1;
+    }
+    int rc = 0;
+    for (size_t i = 0; rc == 0 && i < plist->count; ++i)
+        rc = writer_add(writer, &keys[i]) ||
+             append_string(&writer->buffer, plist->entries[i].key) ||
+             write_value(writer, &plist->entries[i], &values[i]);
+    if (rc == 0)
+        rc = writer_add(writer, ref) ||
+             append_marker(&writer->buffer, 0xd0, plist->count);
+    for (size_t i = 0; rc == 0 && i < plist->count; ++i)
+        rc = append_uint(&writer->buffer, keys[i], writer->ref_size);
+    for (size_t i = 0; rc == 0 && i < plist->count; ++i)
+        rc = append_uint(&writer->buffer, values[i], writer->ref_size);
+    free(keys);
+    free(values);
+    return rc;
+}
+
 int
 airplay_plist_serialize(const airplay_plist *plist, uint8_t **out,
                        size_t *length)
 {
-    if (plist == NULL || out == NULL || length == NULL ||
-        plist->count > (UINT64_MAX - 1) / 2)
+    if (plist == NULL || out == NULL || length == NULL)
         return -1;
-    uint64_t object_count = plist->count * 2 + 1;
-    unsigned ref_size = uint_size(object_count - 1);
-    struct buffer buffer = { 0 };
-    size_t *offsets = malloc((size_t)object_count * sizeof(*offsets));
-    if (offsets == NULL || buffer_append(&buffer, "bplist00", 8))
+    size_t objects = count_dict(plist);
+    if (objects == 0)
+        return -1;
+
+    struct object_writer writer = { .ref_size = uint_size(objects - 1) };
+    uint64_t top = 0;
+    if (buffer_append(&writer.buffer, "bplist00", 8) ||
+        write_dict(&writer, plist, &top) || writer.count != objects)
         goto error;
 
-    for (size_t i = 0; i < plist->count; ++i)
-    {
-        offsets[i] = buffer.length;
-        if (append_string(&buffer, plist->entries[i].key))
-            goto error;
-    }
-    for (size_t i = 0; i < plist->count; ++i)
-    {
-        offsets[plist->count + i] = buffer.length;
-        if (append_value(&buffer, &plist->entries[i]))
-            goto error;
-    }
-    offsets[object_count - 1] = buffer.length;
-    if (append_marker(&buffer, 0xd0, plist->count))
-        goto error;
-    for (size_t i = 0; i < plist->count; ++i)
-        if (append_uint(&buffer, i, ref_size))
-            goto error;
-    for (size_t i = 0; i < plist->count; ++i)
-        if (append_uint(&buffer, plist->count + i, ref_size))
-            goto error;
-
-    uint64_t offset_table = buffer.length;
+    uint64_t offset_table = writer.buffer.length;
     unsigned offset_size = uint_size(offset_table);
-    for (uint64_t i = 0; i < object_count; ++i)
-        if (append_uint(&buffer, offsets[i], offset_size))
+    for (size_t i = 0; i < writer.count; ++i)
+        if (append_uint(&writer.buffer, writer.offsets[i], offset_size))
             goto error;
     uint8_t trailer[8] = { 0, 0, 0, 0, 0, 0, (uint8_t)offset_size,
-                           (uint8_t)ref_size };
-    if (buffer_append(&buffer, trailer, sizeof(trailer)) ||
-        append_uint(&buffer, object_count, 8) ||
-        append_uint(&buffer, object_count - 1, 8) ||
-        append_uint(&buffer, offset_table, 8))
+                           writer.ref_size };
+    if (buffer_append(&writer.buffer, trailer, sizeof(trailer)) ||
+        append_uint(&writer.buffer, writer.count, 8) ||
+        append_uint(&writer.buffer, top, 8) ||
+        append_uint(&writer.buffer, offset_table, 8))
         goto error;
 
-    free(offsets);
-    *out = buffer.data;
-    *length = buffer.length;
+    free(writer.offsets);
+    *out = writer.buffer.data;
+    *length = writer.buffer.length;
     return 0;
 
 error:
-    free(offsets);
-    free(buffer.data);
+    free(writer.offsets);
+    free(writer.buffer.data);
     return -1;
 }
 
@@ -626,4 +842,133 @@ error:
 #undef OBJECT_OFFSET
     airplay_plist_release(plist);
     return NULL;
+}
+
+static int
+integer_at(const uint8_t *data, size_t limit, size_t offset, uint64_t *out)
+{
+    if (offset >= limit || (data[offset] & 0xf0) != 0x10 || (data[offset] & 0xf) > 3)
+        return -1;
+    unsigned bytes = 1u << (data[offset] & 0xf);
+    if (offset + 1 + bytes > limit)
+        return -1;
+    *out = read_uint(data + offset + 1, bytes);
+    return 0;
+}
+
+struct plist_scan
+{
+    const uint8_t *data;
+    size_t limit;
+    const uint64_t *offsets;
+    uint64_t object_count;
+    unsigned ref_size;
+    const char *key;
+    uint64_t *out;
+    uint8_t *seen;
+};
+
+static int
+scan_ref(struct plist_scan *scan, uint64_t ref, int depth)
+{
+    if (ref >= scan->object_count || depth > 16 || scan->seen[ref])
+        return -1;
+    scan->seen[ref] = 1;
+    uint64_t offset = scan->offsets[ref];
+    if (offset >= scan->limit)
+        return -1;
+    uint8_t marker = scan->data[offset];
+    if ((marker & 0xf0) != 0xd0 && (marker & 0xf0) != 0xa0)
+        return -1;
+
+    size_t position = (size_t)offset + 1;
+    uint64_t count;
+    if (read_length(scan->data, scan->limit, &position, marker, &count))
+        return -1;
+    bool is_dict = (marker & 0xf0) == 0xd0;
+    uint64_t slots = is_dict ? count * 2 : count;
+    if (scan->ref_size == 0 || slots > (scan->limit - position) / scan->ref_size)
+        return -1;
+
+    for (uint64_t i = 0; i < count; ++i)
+    {
+        uint64_t value_ref;
+        if (is_dict)
+        {
+            uint64_t key_ref =
+                read_uint(scan->data + position + i * scan->ref_size,
+                          scan->ref_size);
+            value_ref = read_uint(scan->data + position + (count + i) * scan->ref_size,
+                                  scan->ref_size);
+            if (key_ref >= scan->object_count || value_ref >= scan->object_count)
+                continue;
+            char *key = parse_string(scan->data, scan->limit,
+                                    (size_t)scan->offsets[key_ref]);
+            if (key != NULL && strcmp(key, scan->key) == 0 &&
+                integer_at(scan->data, scan->limit,
+                           (size_t)scan->offsets[value_ref], scan->out) == 0)
+            {
+                free(key);
+                return 0;
+            }
+            free(key);
+        }
+        else
+        {
+            value_ref = read_uint(scan->data + position + i * scan->ref_size,
+                                  scan->ref_size);
+            if (value_ref >= scan->object_count)
+                continue;
+        }
+        if (scan_ref(scan, value_ref, depth + 1) == 0)
+            return 0;
+    }
+    return -1;
+}
+
+int
+airplay_plist_find_integer(const uint8_t *data, size_t length, const char *key,
+                           uint64_t *out)
+{
+    if (data == NULL || key == NULL || out == NULL || length < 40 ||
+        memcmp(data, "bplist00", 8) != 0)
+        return -1;
+    const uint8_t *trailer = data + length - 32;
+    unsigned offset_size = trailer[6], ref_size = trailer[7];
+    uint64_t object_count = read_uint(trailer + 8, 8);
+    uint64_t top = read_uint(trailer + 16, 8);
+    uint64_t offset_table = read_uint(trailer + 24, 8);
+    if ((offset_size != 1 && offset_size != 2 && offset_size != 4 &&
+         offset_size != 8) ||
+        (ref_size != 1 && ref_size != 2 && ref_size != 4 && ref_size != 8) ||
+        object_count == 0 || top >= object_count || offset_table < 8 ||
+        offset_table > length - 32 ||
+        object_count > (length - 32 - offset_table) / offset_size)
+        return -1;
+
+    uint64_t *offsets = malloc((size_t)object_count * sizeof(*offsets));
+    uint8_t *seen = calloc((size_t)object_count, 1);
+    if (offsets == NULL || seen == NULL)
+    {
+        free(offsets);
+        free(seen);
+        return -1;
+    }
+    for (uint64_t i = 0; i < object_count; ++i)
+        offsets[i] = read_uint(data + offset_table + i * offset_size, offset_size);
+
+    struct plist_scan scan = {
+        .data = data,
+        .limit = (size_t)offset_table,
+        .offsets = offsets,
+        .object_count = object_count,
+        .ref_size = ref_size,
+        .key = key,
+        .out = out,
+        .seen = seen,
+    };
+    int rc = scan_ref(&scan, top, 0);
+    free(offsets);
+    free(seen);
+    return rc;
 }

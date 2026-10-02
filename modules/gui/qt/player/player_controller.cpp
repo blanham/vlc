@@ -407,10 +407,39 @@ static void on_player_state_changed(vlc_player_t *, enum vlc_player_state state,
             that->m_audioStereoMode.resetObject( aout.get() );
             that->m_audioMixMode.resetObject( aout.get() );
             that->m_audioVisualization.resetObject( aout.get() );
+            if (!that->seeking && that->m_player_time.ts >= VLC_TICK_0
+             && !that->m_time_timer.isActive())
+            {
+                that->m_player_time.system_date = vlc_tick_now();
+                if (that->m_player_time.rate <= 0.0)
+                    that->m_player_time.rate = 1.0;
+                vlc_tick_t now = vlc_tick_now();
+                if (that->interpolateTime(now) == VLC_SUCCESS)
+                {
+                    q->updatePosition();
+                    q->updateTime(now, true);
+                    vlc_tick_t interval = that->m_length.toVLCTick();
+                    if (that->m_player_time.rate > 0.0)
+                        interval = interval / that->m_player_time.rate / VLC_TICK_FROM_MS(1);
+                    if (interval < POSITION_MIN_UPDATE_INTERVAL)
+                        interval = POSITION_MIN_UPDATE_INTERVAL;
+                    that->m_position_timer.start(MS_FROM_VLC_TICK(interval));
+                }
+            }
             break;
         }
         case VLC_PLAYER_STATE_PAUSED:
             msg_Dbg( that->p_intf, "on_player_state_changed VLC_PLAYER_STATE_PAUSED");
+            /* AirPlay has no local audio or video output, so nothing reports
+             * a paused clock. Freeze the interpolated time where it is. */
+            that->m_player_time.system_date = VLC_TICK_MAX;
+            that->m_position_timer.stop();
+            that->m_time_timer.stop();
+            if (that->interpolateTime(vlc_tick_now()) == VLC_SUCCESS)
+            {
+                q->updatePosition();
+                q->updateTime(vlc_tick_now(), true);
+            }
             break;
         case VLC_PLAYER_STATE_STOPPING:
             msg_Dbg( that->p_intf, "on_player_state_changed VLC_PLAYER_STATE_STOPPING");
@@ -505,8 +534,35 @@ static void on_player_buffering(vlc_player_t *, float new_buffering, void *data)
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
     msg_Dbg( that->p_intf, "on_player_buffering");
     that->callAsync([that,new_buffering](){
+        PlayerController* q = that->q_func();
         that->m_buffering = new_buffering;
-        emit that->q_func()->bufferingChanged( new_buffering );
+        emit q->bufferingChanged( new_buffering );
+
+        /* Casting finishes buffering with the clock stopped and no further
+         * timer points, so the bar stays put. Restart it from the current time. */
+        if (new_buffering < 1.f || that->seeking)
+            return;
+        if (that->m_playing_status != PlayerController::PLAYING_STATE_PLAYING)
+            return;
+        if (that->m_player_time.ts < VLC_TICK_0 || that->m_time_timer.isActive())
+            return;
+
+        that->m_player_time.system_date = vlc_tick_now();
+        if (that->m_player_time.rate <= 0.0)
+            that->m_player_time.rate = 1.0;
+
+        vlc_tick_t now = vlc_tick_now();
+        if (that->interpolateTime(now) != VLC_SUCCESS)
+            return;
+        q->updatePosition();
+        q->updateTime(now, true);
+
+        vlc_tick_t interval = that->m_length.toVLCTick();
+        if (that->m_player_time.rate > 0.0)
+            interval = interval / that->m_player_time.rate / VLC_TICK_FROM_MS(1);
+        if (interval < POSITION_MIN_UPDATE_INTERVAL)
+            interval = POSITION_MIN_UPDATE_INTERVAL;
+        that->m_position_timer.start(MS_FROM_VLC_TICK(interval));
     });
 }
 
@@ -1001,7 +1057,31 @@ static void on_player_timer_update(const struct vlc_player_timer_point *point,
     that->callAsync([that,point_copy = *point](){
         PlayerController* q = that->q_func();
 
+        if (that->m_playing_status == PlayerController::PLAYING_STATE_PAUSED)
+        {
+            that->m_player_time = point_copy;
+            that->m_player_time.system_date = VLC_TICK_MAX;
+            that->m_position_timer.stop();
+            that->m_time_timer.stop();
+            if (that->interpolateTime(vlc_tick_now()) == VLC_SUCCESS)
+            {
+                q->updatePosition();
+                q->updateTime(vlc_tick_now(), true);
+            }
+            return;
+        }
+
         that->m_player_time = point_copy;
+        /* A cast has no local output clock. The only point often arrives with
+         * system_date MAX, which skips interpolation, so the bar never moves.
+         * While we are actually playing, start the clock from this time. */
+        if (that->m_playing_status == PlayerController::PLAYING_STATE_PLAYING
+         && that->m_player_time.system_date == VLC_TICK_MAX)
+        {
+            that->m_player_time.system_date = vlc_tick_now();
+            if (that->m_player_time.rate <= 0.0)
+                that->m_player_time.rate = 1.0;
+        }
         bool lengthOrRateChanged = false;
 
         if (that->m_length.toVLCTick() != that->m_player_time.length)
@@ -1053,16 +1133,36 @@ static void on_player_timer_paused(vlc_tick_t system_date, void *data)
     that->callAsync([that,system_date](){
         PlayerController* q = that->q_func();
 
+        /* Losing the local picture while a cast is still playing reports a
+         * paused clock. Keep the bar moving until the player itself pauses. */
+        if (that->m_playing_status == PlayerController::PLAYING_STATE_PLAYING
+         && !that->seeking && that->m_player_time.ts >= VLC_TICK_0)
+        {
+            that->m_player_time.system_date = vlc_tick_now();
+            if (that->m_player_time.rate <= 0.0)
+                that->m_player_time.rate = 1.0;
+            vlc_tick_t now = vlc_tick_now();
+            if (that->interpolateTime(now) == VLC_SUCCESS)
+            {
+                q->updatePosition();
+                q->updateTime(now, true);
+                vlc_tick_t interval = that->m_length.toVLCTick();
+                if (that->m_player_time.rate > 0.0)
+                    interval = interval / that->m_player_time.rate / VLC_TICK_FROM_MS(1);
+                if (interval < POSITION_MIN_UPDATE_INTERVAL)
+                    interval = POSITION_MIN_UPDATE_INTERVAL;
+                that->m_position_timer.start(MS_FROM_VLC_TICK(interval));
+            }
+            return;
+        }
+
         if (system_date != VLC_TICK_INVALID
          && that->interpolateTime(system_date) == VLC_SUCCESS)
         {
-            // The discontinuity event got a valid system date, update the time
-            // properties.
             q->updatePosition();
             q->updateTime(system_date, false);
         }
 
-        // And stop the timers.
         that->m_position_timer.stop();
         that->m_time_timer.stop();
     });
@@ -1079,16 +1179,38 @@ static void on_player_timer_seek(const struct vlc_player_timer_point *point,
             PlayerController* q = that->q_func();
 
             that->m_player_time = point_copy;
+            if (that->m_playing_status == PlayerController::PLAYING_STATE_PLAYING)
+            {
+                that->m_player_time.system_date = vlc_tick_now();
+                if (that->m_player_time.rate <= 0.0)
+                    that->m_player_time.rate = 1.0;
+            }
             if (that->m_player_time.position > 0)
                 that->m_position = that->m_player_time.position;
             if (that->m_player_time.ts != VLC_TICK_INVALID)
                 that->m_time = that->m_player_time.ts - VLC_TICK_0;
 
             q->updatePosition();
-            q->updateTime(VLC_TICK_INVALID, false);
+            vlc_tick_t now = vlc_tick_now();
+            q->updateTime(now, true);
 
-            that->m_position_timer.stop();
-            that->m_time_timer.stop();
+            /* A cast never sends another clock point after a seek, so leaving
+             * the timers stopped freezes the bar at the jump. */
+            if (that->m_playing_status == PlayerController::PLAYING_STATE_PLAYING
+             && that->interpolateTime(now) == VLC_SUCCESS)
+            {
+                vlc_tick_t interval = that->m_length.toVLCTick();
+                if (that->m_player_time.rate > 0.0)
+                    interval = interval / that->m_player_time.rate / VLC_TICK_FROM_MS(1);
+                if (interval < POSITION_MIN_UPDATE_INTERVAL)
+                    interval = POSITION_MIN_UPDATE_INTERVAL;
+                that->m_position_timer.start(MS_FROM_VLC_TICK(interval));
+            }
+            else
+            {
+                that->m_position_timer.stop();
+                that->m_time_timer.stop();
+            }
         });
     }
     else

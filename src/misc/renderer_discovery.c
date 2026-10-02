@@ -77,12 +77,31 @@ item_set_sout_from_uri(vlc_renderer_item_t *p_item, const char *psz_uri,
             p_item->psz_name = NULL;
     }
 
-    if (asprintf(&p_item->psz_sout, "%s{ip=%s,port=%u,%s%s%s%s}",
-                 url.psz_protocol, url.psz_host, url.i_port,
-                 psz_name != NULL ? "device-name=" : "",
-                 psz_name != NULL ? psz_name : "",
-                 psz_extra_sout != NULL ? "," : "",
-                 psz_extra_sout != NULL ? psz_extra_sout : "") == -1)
+    if (psz_name != NULL)
+    {
+        if (asprintf(&p_item->psz_sout, "%s{ip=%s,port=%u,device-name=\"%s\"%s%s}",
+                     url.psz_protocol, url.psz_host, url.i_port, psz_name,
+                     psz_extra_sout != NULL ? "," : "",
+                     psz_extra_sout != NULL ? psz_extra_sout : "") == -1)
+        {
+            p_item->psz_sout = NULL;
+            vlc_UrlClean(&url);
+            return VLC_ENOMEM;
+        }
+    }
+    else if (psz_extra_sout != NULL)
+    {
+        if (asprintf(&p_item->psz_sout, "%s{ip=%s,port=%u,%s}",
+                     url.psz_protocol, url.psz_host, url.i_port,
+                     psz_extra_sout) == -1)
+        {
+            p_item->psz_sout = NULL;
+            vlc_UrlClean(&url);
+            return VLC_ENOMEM;
+        }
+    }
+    else if (asprintf(&p_item->psz_sout, "%s{ip=%s,port=%u}",
+                      url.psz_protocol, url.psz_host, url.i_port) == -1)
     {
         p_item->psz_sout = NULL;
         vlc_UrlClean(&url);

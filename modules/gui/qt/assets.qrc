@@ -11,12 +11,14 @@
         <file alias="vlc128-kb.png">../../../share/icons/128x128/vlc-kb.png</file>
     </qresource>
     <qresource prefix="/icons">
+        <file alias="airplay.svg">pixmaps/icons/airplay.svg</file>
         <file alias="atob.svg">pixmaps/icons/atob.svg</file>
         <file alias="ic_fluent_arrow_download_24_regular.svg">pixmaps/icons/ic_fluent_arrow_download_24_regular.svg</file>
         <file alias="ic_fluent_arrow_sync_24_regular.svg">pixmaps/icons/ic_fluent_arrow_sync_24_regular.svg</file>
     </qresource>
     <qresource prefix="/menu">
         <file alias="add.svg">pixmaps/menu/add.svg</file>
+        <file alias="airplay.svg">pixmaps/menu/airplay.svg</file>
         <file alias="capture-card.svg">pixmaps/menu/capture-card.svg</file>
         <file alias="clear.svg">pixmaps/menu/clear.svg</file>
         <file alias="disc.svg">pixmaps/menu/disc.svg</file>

@@ -36,6 +36,7 @@
 #include <vlc_modules.h>
 #include <vlc_services_discovery.h>
 #include <vlc_renderer_discovery.h>
+#include <vlc_url.h>
 
 #include <microdns/microdns.h>
 
@@ -440,6 +441,8 @@ parse_entries_sd( const struct rr_entry *p_entries,
         return VLC_EGENERIC;
 
     const char *psz_ip = NULL;
+    const char *psz_ip4 = NULL;
+    const char *psz_ip6 = NULL;
     i_nb_srv = 0;
     for( const struct rr_entry *p_entry = p_entries;
          p_entry != NULL; p_entry = p_entry->next )
@@ -466,13 +469,21 @@ parse_entries_sd( const struct rr_entry *p_entries,
                 }
             }
         }
-        else if( p_entry->type == RR_A && psz_ip == NULL )
-            psz_ip = p_entry->data.A.addr_str;
-        else if( p_entry->type == RR_AAAA && psz_ip == NULL )
-        {
-            psz_ip = p_entry->data.AAAA.addr_str;
-            *p_ipv6 = true;
-        }
+        else if( p_entry->type == RR_A && psz_ip4 == NULL )
+            psz_ip4 = p_entry->data.A.addr_str;
+        else if( p_entry->type == RR_AAAA && psz_ip6 == NULL )
+            psz_ip6 = p_entry->data.AAAA.addr_str;
+    }
+    /* Prefer IPv4: the local media URL is much more likely to be reachable. */
+    if( psz_ip4 != NULL )
+    {
+        psz_ip = psz_ip4;
+        *p_ipv6 = false;
+    }
+    else if( psz_ip6 != NULL )
+    {
+        psz_ip = psz_ip6;
+        *p_ipv6 = true;
     }
     if( psz_ip == NULL || i_nb_srv == 0 )
     {
@@ -506,6 +517,8 @@ parse_entries_rd( const struct rr_entry *p_entries,
         return VLC_EGENERIC;
 
     const char *psz_ip = NULL;
+    const char *psz_ip4 = NULL;
+    const char *psz_ip6 = NULL;
     struct srv *p_srv = NULL;
     i_nb_srv = 0;
     for( const struct rr_entry *p_entry = p_entries;
@@ -532,13 +545,10 @@ parse_entries_rd( const struct rr_entry *p_entries,
             p_srv->renderer.i_renderer_flags = proto->i_default_flags;
             ++i_nb_srv;
         }
-        else if( p_entry->type == RR_A && psz_ip == NULL )
-            psz_ip = p_entry->data.A.addr_str;
-        else if( p_entry->type == RR_AAAA && psz_ip == NULL )
-        {
-            psz_ip = p_entry->data.AAAA.addr_str;
-            *p_ipv6 = true;
-        }
+        else if( p_entry->type == RR_A && psz_ip4 == NULL )
+            psz_ip4 = p_entry->data.A.addr_str;
+        else if( p_entry->type == RR_AAAA && psz_ip6 == NULL )
+            psz_ip6 = p_entry->data.AAAA.addr_str;
         else if( p_entry->type == RR_TXT && p_srv != NULL
               && p_srv->renderer_proto != NULL
               && p_srv->renderer_proto->kind == MDNS_KIND_CHROMECAST )
@@ -547,6 +557,16 @@ parse_entries_rd( const struct rr_entry *p_entries,
                   p_txt != NULL ; p_txt = p_txt->next )
                 chromecast_parse_txt( p_srv, p_txt->txt );
         }
+    }
+    if( psz_ip4 != NULL )
+    {
+        psz_ip = psz_ip4;
+        *p_ipv6 = false;
+    }
+    else if( psz_ip6 != NULL )
+    {
+        psz_ip = psz_ip6;
+        *p_ipv6 = true;
     }
     if( psz_ip == NULL || i_nb_srv == 0 )
     {
@@ -640,9 +660,73 @@ airplay_publish( vlc_renderer_discovery_t *p_rd,
                       ep->ipv6 ? "[" : "", ep->host,
                       ep->ipv6 ? "]" : "", ep->port ) < 0 )
             goto error;
-        if( asprintf( &psz_extra_sout, "device-id=%s",
-                      dev->stable_id ) < 0 )
-            goto error;
+        {
+            char *pk_hex = dev->has_public_key ?
+                airplay_format_public_key_hex( dev->public_key ) : NULL;
+            const char *pairing_id = dev->deviceid;
+
+            if( pk_hex != NULL && pairing_id != NULL && pairing_id[0] != '\0' )
+            {
+                if( asprintf( &psz_extra_sout,
+                              "device-id=%s,accessory-pk=%s,accessory-pairing-id=%s",
+                              dev->stable_id, pk_hex, pairing_id ) < 0 )
+                {
+                    free( pk_hex );
+                    goto error;
+                }
+            }
+            else if( asprintf( &psz_extra_sout, "device-id=%s",
+                               dev->stable_id ) < 0 )
+            {
+                free( pk_hex );
+                goto error;
+            }
+            free( pk_hex );
+        }
+    }
+
+    /* Goodbye packets from the same device arrive every few seconds. Rebuilding
+     * the Qt row each time assigns a new icon into a delegate that is already
+     * being destroyed (QIcon::operator= on a null destination). */
+    if( dev->renderer_item != NULL )
+    {
+        const char *cur_name = vlc_renderer_item_name( dev->renderer_item );
+        const char *cur_sout = vlc_renderer_item_sout( dev->renderer_item );
+        int cur_flags = vlc_renderer_item_flags( dev->renderer_item );
+        uint64_t cur_caps = vlc_renderer_item_capabilities( dev->renderer_item );
+        bool same = cur_name != NULL && strcmp( cur_name, psz_name ) == 0
+                 && cur_flags == flags
+                 && cur_caps == (uint64_t)flags;
+
+        if( same && psz_uri != NULL )
+        {
+            vlc_url_t url;
+            char *expect = NULL;
+            int printed = -1;
+
+            vlc_UrlParse( &url, psz_uri );
+            if( url.psz_protocol != NULL && url.psz_host != NULL )
+                printed = asprintf( &expect,
+                          "%s{ip=%s,port=%u,device-name=\"%s\"%s%s}",
+                          url.psz_protocol, url.psz_host, url.i_port, psz_name,
+                          psz_extra_sout != NULL ? "," : "",
+                          psz_extra_sout != NULL ? psz_extra_sout : "" );
+            same = printed >= 0 && cur_sout != NULL
+                && strcmp( cur_sout, expect ) == 0;
+            if( printed >= 0 )
+                free( expect );
+            vlc_UrlClean( &url );
+        }
+        else if( same )
+            same = cur_sout != NULL && cur_sout[0] == '\0';
+
+        if( same )
+        {
+            free( psz_extra_sout );
+            free( psz_uri );
+            free( psz_name );
+            return VLC_SUCCESS;
+        }
     }
 
     memset( &desc, 0, sizeof(desc) );
@@ -653,13 +737,16 @@ airplay_publish( vlc_renderer_discovery_t *p_rd,
     desc.extra_sout = psz_extra_sout;
     desc.flags = flags;
     desc.capabilities = (uint64_t)flags;
+    desc.icon_uri = "qrc://menu/airplay.svg";
 
     item = vlc_renderer_item_new_ex( &desc );
-    free( psz_extra_sout );
-    free( psz_uri );
-    free( psz_name );
     if( item == NULL )
+    {
+        free( psz_extra_sout );
+        free( psz_uri );
+        free( psz_name );
         return VLC_ENOMEM;
+    }
 
     if( dev->renderer_item != NULL )
     {
@@ -671,6 +758,13 @@ airplay_publish( vlc_renderer_discovery_t *p_rd,
     vlc_rd_add_item( p_rd, item );
     dev->renderer_item = item;
     dev->published = true;
+    msg_Dbg( p_rd, "mDNS: published AirPlay renderer '%s' uri=%s id=%s",
+             psz_name,
+             psz_uri != NULL ? psz_uri : "(none)",
+             dev->stable_id );
+    free( psz_extra_sout );
+    free( psz_uri );
+    free( psz_name );
     return VLC_SUCCESS;
 
 error:
@@ -750,6 +844,19 @@ airplay_handle_service( vlc_renderer_discovery_t *p_rd,
     }
 
     airplay_device_clear( &probe );
+
+    /* Wait for one more advertisement before publishing a receiver that
+     * has no AirPlay endpoint yet. The follow-up record usually carries
+     * the AirPlay service and a different stable id; publishing both
+     * deletes the Qt menu action while its icon is still loading. */
+    if( !dev->airplay.valid )
+    {
+        if( !dev->saw_incomplete )
+        {
+            dev->saw_incomplete = true;
+            return;
+        }
+    }
     airplay_publish( p_rd, dev );
 }
 

@@ -156,6 +156,11 @@ FocusScope {
         function onHasEmbededVideoChanged() {
             playlistVisibility.updateVideoEmbed()
             playerToolbarVisibilityFSM.updateVideoEmbed()
+            /* Replacing the picture with the cover used to leave the bar
+             * hidden. The cover does not receive the video mouse events, so
+             * only a key (Escape) could bring the controls back. */
+            if (!MainCtx.hasEmbededVideo)
+                playerToolbarVisibilityFSM.askShow()
         }
         function onAskShow() {
             playerToolbarVisibilityFSM.askShow()
@@ -467,6 +472,10 @@ FocusScope {
                     anchors.fill: parent
                     anchors.topMargin: VLCStyle.margin_xsmall + audioFocusScope.topPadding
                     anchors.bottomMargin: VLCStyle.margin_xsmall + audioFocusScope.bottomPadding
+
+                    hoverEnabled: true
+                    onPressed: playerToolbarVisibilityFSM.mouseMove()
+                    onPositionChanged: playerToolbarVisibilityFSM.mouseMove()
 
                     onWheel: (wheel) => {
                         wheel.accepted = true

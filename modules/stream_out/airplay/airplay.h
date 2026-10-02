@@ -35,10 +35,21 @@ struct airplay_sys
     bool control_thread_started;
     bool closing;
     bool pending_stop;
+    bool pending_restart;
     bool pending_rate;
     double requested_rate;
     bool pending_scrub;
     double requested_scrub;
+    /* Hold the local input open for the media duration. Dropping packets
+     * immediately makes the demuxer hit EOF and VLC tears the cast down. */
+    bool pace_started;
+    bool pace_reset;
+    bool paused;
+    bool release_send;
+    bool cast_left;
+    vlc_tick_t pace_origin_pts;
+    vlc_tick_t pace_origin_wall;
+    vlc_tick_t pause_since;
 };
 
 #endif

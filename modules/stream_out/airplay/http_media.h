@@ -22,6 +22,11 @@ airplay_http_media *airplay_http_media_start(vlc_object_t *obj,
                                              uint16_t http_port,
                                              const char *filepath);
 void airplay_http_media_stop(airplay_http_media *);
+void airplay_http_media_unpublish(airplay_http_media *);
+int airplay_http_media_republish(airplay_http_media *);
+void airplay_http_media_set_start(airplay_http_media *, double start_seconds);
+char *airplay_http_media_reissue(airplay_http_media *, const char *lan_ip,
+                                 double start_seconds);
 const char *airplay_http_media_token(const airplay_http_media *);
 char *airplay_http_media_url(const airplay_http_media *, const char *lan_ip);
 

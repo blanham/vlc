@@ -21,6 +21,10 @@
  */
 void airplay_crypto_init(void);
 
+/* libgcrypt in this build has a no-op thread lock and aborts if two threads
+ * enter it. Every entry point, including random, has to share one mutex. */
+void airplay_random_bytes(void *buf, size_t len);
+
 /* -- Ed25519 (RFC 8032) -----------------------------------------------
  * The secret key layout matches the common "seed || public key" 64-byte
  * convention: sk[0..31] is the 32-byte seed, sk[32..63] is the 32-byte
@@ -61,9 +65,10 @@ int airplay_hkdf_sha512(uint8_t *out, size_t out_len,
 /* -- SRP-6a, HAP 3072-bit group, SHA-512, username "Pair-Setup" ----------
  * Client-side only, as needed to build a Pair-Setup request:
  *
- *   ctx = airplay_srp_client_new(pin);
+ *   ctx = airplay_srp_client_new(NULL);
  *   airplay_srp_client_start(ctx, &A, &A_len);           -> send A
- *   /' receive salt + B from the accessory '/
+ *   /' receive salt + B from the accessory (TV shows PIN) '/
+ *   airplay_srp_client_set_pin(ctx, pin);
  *   airplay_srp_client_finish(ctx, salt, salt_len, B, B_len,
  *                              &M1, &M1_len, shared_key); -> send M1
  *   /' receive M2 from the accessory '/
@@ -80,6 +85,8 @@ typedef struct airplay_srp_ctx airplay_srp_ctx;
 
 airplay_srp_ctx *airplay_srp_client_new(const char *pin);
 void airplay_srp_client_release(airplay_srp_ctx *);
+
+int airplay_srp_client_set_pin(airplay_srp_ctx *, const char *pin);
 
 int airplay_srp_client_start(airplay_srp_ctx *, uint8_t **A, size_t *A_len);
 

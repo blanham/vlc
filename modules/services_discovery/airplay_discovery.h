@@ -73,6 +73,9 @@ struct airplay_discovered_device
     void *renderer_item;
     int64_t last_seen;
     bool published;
+    /* RAOP is advertised before the AirPlay service. Publishing that
+     * incomplete identity replaces the Qt row a moment later. */
+    bool saw_incomplete;
 };
 
 struct airplay_device_table
@@ -107,6 +110,9 @@ int airplay_parse_u64(const char *value, uint64_t *out);
  * Rejects wrong length and non-hex input.
  */
 int airplay_parse_public_key(const char *value, uint8_t out[AIRPLAY_PK_SIZE]);
+
+/** Lowercase hex encoding of a 32-byte Ed25519 public key (64 chars + NUL). */
+char *airplay_format_public_key_hex(const uint8_t pk[AIRPLAY_PK_SIZE]);
 
 /**
  * Normalize a device identifier to uppercase hex without separators.

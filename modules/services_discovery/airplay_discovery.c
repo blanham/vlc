@@ -301,6 +301,28 @@ airplay_parse_features(const char *value, uint64_t *out)
     return 0;
 }
 
+char *
+airplay_format_public_key_hex(const uint8_t pk[AIRPLAY_PK_SIZE])
+{
+    static const char hex[] = "0123456789abcdef";
+    char *out;
+
+    if (pk == NULL)
+        return NULL;
+
+    out = malloc(AIRPLAY_PK_SIZE * 2 + 1);
+    if (out == NULL)
+        return NULL;
+
+    for (size_t i = 0; i < AIRPLAY_PK_SIZE; i++)
+    {
+        out[i * 2] = hex[pk[i] >> 4];
+        out[i * 2 + 1] = hex[pk[i] & 0x0f];
+    }
+    out[AIRPLAY_PK_SIZE * 2] = '\0';
+    return out;
+}
+
 int
 airplay_parse_public_key(const char *value, uint8_t out[AIRPLAY_PK_SIZE])
 {
